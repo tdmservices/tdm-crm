@@ -1,122 +1,120 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useEffect, useState } from "react";
+import { get, post, setToken, getToken, flushOutbox, outboxCount, cmpVersion, APP_VERSION, type User } from "./lib/api";
+import { useHash, Link, Err } from "./lib/ui";
+import { TodayPage } from "./pages/Today";
+import { PipelinePage } from "./pages/Pipeline";
+import { ProspectPage } from "./pages/Prospect";
+import { TasksPage } from "./pages/Tasks";
+import { LeaderboardPage } from "./pages/Leaderboard";
+import { CommissionPage } from "./pages/Commission";
+import { TargetsPage } from "./pages/Targets";
+import { TeamPage } from "./pages/Team";
+import { ReportsPage } from "./pages/Reports";
+import { AdminPage } from "./pages/Admin";
+import { PayoutsPage } from "./pages/Payouts";
 
-function App() {
-  const [count, setCount] = useState(0)
+export function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [booting, setBooting] = useState(!!getToken());
+  const [gate, setGate] = useState<{ min: string; url: string } | null>(null);
+  const [online, setOnline] = useState(navigator.onLine);
+  const [pending, setPending] = useState(outboxCount());
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+  useEffect(() => {
+    const on = () => { setOnline(true); void flushOutbox().then(() => setPending(outboxCount())); };
+    const off = () => setOnline(false);
+    const ob = () => setPending(outboxCount());
+    const lo = () => setUser(null);
+    window.addEventListener("online", on); window.addEventListener("offline", off); window.addEventListener("tdm:outbox", ob); window.addEventListener("tdm:logout", lo);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); window.removeEventListener("tdm:outbox", ob); window.removeEventListener("tdm:logout", lo); };
+  }, []);
 
-      <div className="ticks"></div>
+  useEffect(() => {
+    if (!getToken()) return;
+    get("/auth/me").then(r => { setUser(r.user); checkVersion(r.min_app_version, r.apk_download_url); void flushOutbox(); })
+      .catch(() => { /* offline: keep cached session */ const c = localStorage.getItem("tdm_user"); if (c) setUser(JSON.parse(c)); })
+      .finally(() => setBooting(false));
+  }, []);
+  useEffect(() => { if (user) localStorage.setItem("tdm_user", JSON.stringify(user)); }, [user]);
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+  function checkVersion(min: string | undefined, url: string | undefined) {
+    if (min && cmpVersion(APP_VERSION, min) < 0) setGate({ min, url: url ?? "" });
+  }
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+  if (gate) return (
+    <div className="login card">
+      <h1>Update required</h1>
+      <p>This app is version {APP_VERSION}. The team must be on at least {gate.min} so everyone runs the same commission logic.</p>
+      {gate.url ? <a className="btn" href={gate.url}>Download the new APK</a> : <p className="muted">Ask Abdul for the new APK.</p>}
+    </div>
+  );
+  if (booting) return <div className="center">Loading…</div>;
+  if (!user) return <Login onLogin={(u, min, url) => { setUser(u); checkVersion(min, url); }} />;
+  return <Shell user={user} online={online} pending={pending} onLogout={() => { setToken(null); localStorage.removeItem("tdm_user"); setUser(null); }} />;
 }
 
-export default App
+function Login({ onLogin }: { onLogin: (u: User, min?: string, url?: string) => void }) {
+  const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [err, setErr] = useState<unknown>(null); const [busy, setBusy] = useState(false);
+  async function submit(e: React.FormEvent) {
+    e.preventDefault(); setBusy(true); setErr(null);
+    try { const r = await post("/auth/login", { email, password, app_version: APP_VERSION }); setToken(r.token); onLogin(r.user, r.min_app_version, r.apk_download_url); }
+    catch (e) { setErr(e); } finally { setBusy(false); }
+  }
+  return (
+    <form className="login card" onSubmit={submit}>
+      <h1>TDM CRM</h1>
+      <p className="muted small">If it is not in the CRM, it did not happen.</p>
+      <label className="f"><span>Email</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" required /></label>
+      <label className="f"><span>Password</span><input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>
+      <Err e={err} />
+      <button className="btn" disabled={busy} style={{ width: "100%" }}>{busy ? "Signing in…" : "Sign in"}</button>
+    </form>
+  );
+}
+
+function Shell({ user, online, pending, onLogout }: { user: User; online: boolean; pending: number; onLogout: () => void }) {
+  const hash = useHash();
+  const mgmt = user.role !== "agent";
+  const tabs = mgmt
+    ? [["/", "Team", "▣"], ["/pipeline", "Pipeline", "☰"], ["/tasks", "Tasks", "✓"], ["/payouts", "Payouts", "$"], ["/reports", "Reports", "▤"], ["/leaderboard", "Board", "★"], ["/targets", "Targets", "◎"], ["/admin", "Admin", "⚙"]]
+    : [["/", "Today", "☀"], ["/pipeline", "Pipeline", "☰"], ["/tasks", "Tasks", "✓"], ["/commission", "Money", "$"], ["/leaderboard", "Board", "★"], ["/targets", "Targets", "◎"]];
+  const active = (p: string) => (p === "/" ? hash === "/" : hash.startsWith(p)) ? "active" : "";
+  const mobileTabs = tabs.slice(0, 5);
+  return (
+    <div className="shell">
+      <nav className="sidebar">
+        <div className="brand">TDM CRM</div>
+        {tabs.map(([p, l]) => <Link key={p} to={p} className={active(p)}>{l}</Link>)}
+        <div className="who">{user.name} · {user.role}<br /><a onClick={onLogout} style={{ padding: 0, display: "inline", color: "#94a3b8" }}>Sign out</a></div>
+      </nav>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <header className="topbar"><span className="brand">TDM CRM</span><span className="who">{user.name} · <a onClick={onLogout} style={{ color: "#cbd5e1" }}>Sign out</a></span></header>
+        {!online && <div className="offline-bar">Offline. Entries are saved on this device and will sync when back online{pending ? ` (${pending} waiting)` : ""}.</div>}
+        {online && pending > 0 && <div className="offline-bar">Syncing {pending} saved entries…</div>}
+        <main className="content"><Router hash={hash} user={user} /></main>
+      </div>
+      <nav className="tabbar">{mobileTabs.map(([p, l, i]) => <Link key={p} to={p} className={active(p)}><span className="ico">{i}</span>{l}</Link>)}{mgmt && <Link to="/admin" className={active("/admin")}><span className="ico">⚙</span>More</Link>}</nav>
+    </div>
+  );
+}
+
+function Router({ hash, user }: { hash: string; user: User }) {
+  const [path, query] = hash.split("?");
+  const q = new URLSearchParams(query ?? "");
+  const mgmt = user.role !== "agent";
+  const m = path.match(/^\/prospects\/(\d+)/);
+  if (m) return <ProspectPage id={Number(m[1])} user={user} />;
+  switch (path) {
+    case "/": return mgmt ? <TeamPage user={user} /> : <TodayPage user={user} />;
+    case "/today": return <TodayPage user={user} />;
+    case "/pipeline": return <PipelinePage user={user} query={q} />;
+    case "/tasks": return <TasksPage user={user} />;
+    case "/leaderboard": return <LeaderboardPage user={user} />;
+    case "/commission": return <CommissionPage user={user} />;
+    case "/payouts": return mgmt ? <PayoutsPage user={user} /> : <CommissionPage user={user} />;
+    case "/targets": return <TargetsPage user={user} />;
+    case "/reports": return mgmt ? <ReportsPage user={user} /> : <TodayPage user={user} />;
+    case "/admin": return mgmt ? <AdminPage user={user} tab={q.get("tab") ?? "users"} /> : <TodayPage user={user} />;
+    default: return <div className="center">Page not found. <Link to="/">Go home</Link></div>;
+  }
+}

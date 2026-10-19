@@ -26,7 +26,7 @@ meetingsRouter.post("/", (req, res) => {
     }
     db.prepare("UPDATE follow_ups SET done_at = datetime('now') WHERE prospect_id = ? AND done_at IS NULL AND kind LIKE 'auto_%'").run(p.id);
     logActivity({ prospectId: p.id, userId: req.user.id, type: "meeting_booked", detail: `Meeting ${body.scheduled_at} credited to owner` });
-    notify(p.owner_id, "meeting_booked", `Meeting booked: ${p.company}`, body.scheduled_at, p.id);
+    notify(p.owner_id, "meeting_booked", `Meeting booked: ${p.company}`, new Date(body.scheduled_at).toLocaleString("en-GB", { timeZone: "Asia/Karachi", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + " PKT", p.id);
     res.status(201).json({ id: r.lastInsertRowid });
   });
   tx();
