@@ -1,0 +1,16 @@
+# Render: New → Blueprint → pick this repo. Needs a paid instance for the persistent disk.
+services:
+  - type: web
+    name: tdm-crm
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DB_PATH
+        value: /data/tdm.db
+    disk:
+      name: tdm-data
+      mountPath: /data
+      sizeGB: 1

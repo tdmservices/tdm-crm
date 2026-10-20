@@ -52,7 +52,31 @@ Tests (end-to-end API scenarios covering the commission rules):
 npm test
 ```
 
+## Deploy (so the team can use it)
+
+The app is one container: API, web app and a SQLite file on a mounted volume. Any host that runs Docker with a persistent disk works. Two ready-made options:
+
+**Fly.io** (cheapest, about $5/month, Singapore region is closest to Pakistan):
+
+```bash
+fly auth login
+fly launch --copy-config --no-deploy      # accepts fly.toml, creates the app
+fly volumes create tdm_data --size 1 --region sin
+fly secrets set JWT_SECRET=$(openssl rand -hex 32)
+fly deploy
+```
+
+The CRM is then at `https://tdm-crm.fly.dev` (or whatever app name you chose). Seed accounts are created automatically on first start.
+
+**Render**: New → Blueprint → choose this repository. `render.yaml` sets up the service, disk and secret. The starter plan is needed for the persistent disk.
+
+After deploying, log in as Abdul, change the seed passwords in Admin → Users, and create the real agent accounts.
+
 ## Android APK (sideloaded)
+
+**Automatic (recommended):** GitHub Actions builds the APK on every push to `main` and attaches it to a GitHub Release. Set the repository variable `API_URL` (Settings → Secrets and variables → Actions → Variables) to the deployed address, for example `https://tdm-crm.fly.dev`, then run the "Android APK" workflow from the Actions tab or push a change. Download the `.apk` from the Releases page, send it to the team, and paste the release link into Admin → Settings as the APK download URL.
+
+**Manual:**
 
 The APK packages the web bundle and talks to the hosted API. Build on a machine with Android Studio or the Android SDK:
 

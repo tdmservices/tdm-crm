@@ -1,0 +1,45 @@
+# Builds the sideloadable Android APK on every push to main (and on demand) and attaches it to a GitHub Release.
+# Set the repository variable API_URL to the deployed server, e.g. https://tdm-crm.fly.dev
+name: Android APK
+on:
+  push:
+    branches: [main]
+    paths: [web/**, .github/workflows/android-apk.yml]
+  workflow_dispatch:
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: android-actions/setup-android@v3
+      - run: npm install
+      - name: Build web bundle pointing at the API
+        run: npm run build --workspace=web
+        env:
+          VITE_API_URL: ${{ vars.API_URL }}
+      - name: Generate Android project and build APK
+        working-directory: web
+        run: |
+          npx cap add android
+          npx cap sync android
+          cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+      - name: Read app version
+        id: v
+        run: echo "version=$(grep -o 'APP_VERSION = \"[^\"]*\"' web/src/lib/api.ts | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - name: Rename APK
+        run: cp web/android/app/build/outputs/apk/debug/app-debug.apk tdm-crm-${{ steps.v.outputs.version }}.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: tdm-crm-apk, path: tdm-crm-*.apk }
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}-${{ github.run_number }}
+          name: TDM CRM ${{ steps.v.outputs.version }} (build ${{ github.run_number }})
+          files: tdm-crm-*.apk
