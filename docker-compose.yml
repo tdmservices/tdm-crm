@@ -1,0 +1,27 @@
+# Runs the CRM with automatic free HTTPS (Caddy + Let's Encrypt).
+# Set DOMAIN to a hostname that points at this machine, e.g. tdmcrm.duckdns.org
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - DB_PATH=/data/tdm.db
+      - PORT=8080
+    volumes:
+      - tdm_data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+volumes:
+  tdm_data:
+  caddy_data:
+  caddy_config:

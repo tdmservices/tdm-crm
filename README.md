@@ -52,7 +52,23 @@ Tests (end-to-end API scenarios covering the commission rules):
 npm test
 ```
 
-## Deploy (so the team can use it)
+## Deploy for free
+
+A CRM needs a server that keeps its database between restarts. Free tiers at Render, Koyeb and similar hosts wipe the disk on each deploy, and Fly and Railway now charge for storage, so the free path is a free virtual machine. Oracle Cloud's Always Free tier gives one permanently at no charge (a card is required at sign-up for identity checks but Always Free resources are never billed).
+
+1. Sign up at https://cloud.oracle.com/free and create a VM: shape **VM.Standard.A1.Flex** (Always Free, pick 1 OCPU and 6 GB), image **Ubuntu 24.04**, and let it generate an SSH key. Note its public IP.
+2. In the VM's subnet security list, add ingress rules for TCP ports 80 and 443 from 0.0.0.0/0.
+3. Get a free hostname: at https://www.duckdns.org create a subdomain (for example `tdmcrm`) and point it at the VM's public IP.
+4. SSH in (`ssh ubuntu@<ip>`) and run:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/tdmservices/tdm-crm/main/deploy/setup-free-vm.sh | DOMAIN=tdmcrm.duckdns.org bash
+   ```
+   That installs Docker, builds the app, and starts it behind Caddy with a free HTTPS certificate. The CRM is at `https://tdmcrm.duckdns.org` a minute later. Data lives in a Docker volume on the VM.
+5. Updates: `cd ~/tdm-crm && git pull && sudo docker compose up -d --build`.
+
+Backups: the whole database is one file. `sudo docker cp $(sudo docker compose ps -q app):/data/tdm.db ~/tdm-backup.db` copies it out; a weekly cron doing that into Google Drive or a second machine is enough.
+
+## Deploy (paid hosts)
 
 The app is one container: API, web app and a SQLite file on a mounted volume. Any host that runs Docker with a persistent disk works. Two ready-made options:
 
