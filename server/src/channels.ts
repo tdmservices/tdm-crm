@@ -27,8 +27,10 @@ export async function sendWhatsApp(phone: string, text: string) {
   if (!token || !phoneId || !phone) return false;
   try {
     const res = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/messages`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ messaging_product: "whatsapp", to: phone.replace(/\D/g, ""), type: "text", text: { body: text } }) });
+    if (!res.ok) { const err = await res.text(); console.error("whatsapp failed", res.status, err.slice(0, 300)); db.prepare("INSERT INTO settings (key, value) VALUES ('whatsapp_last_error', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`${new Date().toISOString()} ${res.status} ${err.slice(0, 300)}`); }
+    else db.prepare("INSERT INTO settings (key, value) VALUES ('whatsapp_last_error', '') ON CONFLICT(key) DO UPDATE SET value = ''").run();
     return res.ok;
-  } catch { return false; }
+  } catch (e) { console.error("whatsapp error", (e as Error).message); return false; }
 }
 
 export async function sendPush(userId: number, title: string, body?: string, url?: string) {

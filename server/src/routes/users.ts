@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, getSetting, setSetting } from "../db.js";
 import { requireRole, hashPassword } from "../auth.js";
-import { audit } from "../log.js";
+import { audit, notify } from "../log.js";
 import { notFound, bad } from "../errors.js";
 import { refreshRates, rateFor, SUPPORTED } from "../fx.js";
 import { sendEmail } from "../channels.js";
@@ -86,6 +86,13 @@ usersRouter.patch("/me/preferences", (req, res) => {
 usersRouter.get("/me/preferences", (req, res) => {
   res.json({ ...(db.prepare("SELECT notify_email, notify_whatsapp, notify_push, phone FROM users WHERE id = ?").get(req.user.id) as object), vapid_public: getSetting("vapid_public") ?? null, push_count: (db.prepare("SELECT COUNT(*) c FROM push_subscriptions WHERE user_id = ?").get(req.user.id) as any).c });
 });
+/** Fires a real notification through every channel the user has on, so they can check push, email and WhatsApp. */
+usersRouter.post("/me/test-alert", (req, res) => {
+  notify(req.user.id, "test", "Test alert from the CRM", `Sent at ${new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Karachi" })} PKT. If you can read this, this channel works.`);
+  const u = db.prepare("SELECT notify_email, notify_whatsapp, notify_push, phone FROM users WHERE id = ?").get(req.user.id) as any;
+  res.json({ ok: true, channels: { push: !!u.notify_push, email: !!u.notify_email, whatsapp: !!u.notify_whatsapp && !!u.phone }, smtp_configured: !!getSetting("smtp_host"), whatsapp_configured: !!getSetting("whatsapp_token") && !!getSetting("whatsapp_phone_id") });
+});
+
 usersRouter.post("/me/push", (req, res) => {
   const b = z.object({ endpoint: z.string().url(), keys: z.object({ p256dh: z.string(), auth: z.string() }) }).parse(req.body);
   db.prepare("INSERT INTO push_subscriptions (user_id, kind, endpoint, keys_json) VALUES (?, 'webpush', ?, ?) ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, keys_json = excluded.keys_json").run(req.user.id, b.endpoint, JSON.stringify(b.keys));

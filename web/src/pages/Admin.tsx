@@ -173,6 +173,7 @@ function IntegrationCard({ group, settings, owner, onSaved }: { group: Group; se
     <div className="card">
       <h2>{group.title}</h2>
       <p className="small muted">{group.note}</p>
+      {group.id === "wa" && settings.whatsapp_last_error ? <div className="err">Last WhatsApp send failed: {settings.whatsapp_last_error}</div> : null}
       {group.urls?.map(([l, path]) => (
         <Field key={path} label={l}>
           <div className="row" style={{ flexWrap: "nowrap" }}><input readOnly value={origin + path} /><button className="btn sm muted" onClick={() => copy(origin + path)}>Copy</button></div>

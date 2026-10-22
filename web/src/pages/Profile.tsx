@@ -72,7 +72,7 @@ export function ProfilePage({ user }: { user: User }) {
         </div>
 
         <div className="card">
-          <h2>Notifications</h2>
+          <div className="row between"><h2>Notifications</h2><button className="btn sm ghost" disabled={busy} onClick={async () => { setErr(null); try { const r = await post("/users/me/test-alert", {}); const on = Object.entries(r.channels).filter(([, v]) => v).map(([k]) => k).join(", ") || "in-app only"; setMsg(`Test alert sent via: ${on}.${r.channels.whatsapp && !r.whatsapp_configured ? " WhatsApp is on for you but not configured in Admin → Integrations." : ""}${r.channels.email && !r.smtp_configured ? " Email is on for you but SMTP is not configured." : ""}`); } catch (e) { setErr(e); } }}>Send test alert</button></div>
           <p className="small muted">In-app notifications are always on. Choose where else alerts go.</p>
           <label className="row" style={{ marginBottom: 10 }}>
             <input type="checkbox" style={{ width: "auto" }} checked={!!p.notify_push} disabled={busy || prefs.loading} onChange={e => togglePush(e.target.checked)} />
