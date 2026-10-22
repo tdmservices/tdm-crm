@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db, getSetting, setSetting } from "../db.js";
 import { requireRole, hashPassword } from "../auth.js";
 import { audit } from "../log.js";
-import { notFound } from "../errors.js";
+import { notFound, bad } from "../errors.js";
 import { refreshRates, rateFor, SUPPORTED } from "../fx.js";
 
 export const usersRouter = Router();
@@ -73,6 +73,38 @@ usersRouter.post("/me/push", (req, res) => {
 usersRouter.delete("/me/push", (req, res) => {
   const b = z.object({ endpoint: z.string() }).parse(req.body);
   db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?").run(b.endpoint, req.user.id);
+  res.json({ ok: true });
+});
+
+/** Hard-delete a user that has no records at all (seed or mistaken accounts). Anyone with data is deactivated instead. */
+usersRouter.delete("/:id", requireRole("owner"), (req, res) => {
+  const id = Number(req.params.id);
+  if (id === req.user.id) throw bad("You cannot remove your own account");
+  const u = db.prepare("SELECT id, name FROM users WHERE id = ?").get(id) as any;
+  if (!u) throw notFound();
+  const checks: [string, string][] = [
+    ["prospects", "SELECT COUNT(*) c FROM prospects WHERE owner_id = ? OR partner_id = ? OR created_by = ?"],
+    ["activities", "SELECT COUNT(*) c FROM activities WHERE user_id = ? OR user_id = ? OR user_id = ?"],
+    ["meetings", "SELECT COUNT(*) c FROM meetings WHERE credited_to = ? OR booked_by = ? OR booked_by = ?"],
+    ["tasks", "SELECT COUNT(*) c FROM tasks WHERE assigned_to = ? OR assigned_by = ? OR assigned_by = ?"],
+    ["commission entries", "SELECT COUNT(*) c FROM commission_entries WHERE user_id = ? OR user_id = ? OR user_id = ?"],
+    ["payments", "SELECT COUNT(*) c FROM payments WHERE recorded_by = ? OR reversed_by = ? OR recorded_by = ?"],
+    ["notes", "SELECT COUNT(*) c FROM notes WHERE user_id = ? OR user_id = ? OR user_id = ?"],
+  ];
+  for (const [what, sql] of checks) {
+    const c = (db.prepare(sql).get(id, id, id) as any).c;
+    if (c > 0) throw bad(`${u.name} has ${c} ${what}. Deactivate the account instead; records are never deleted.`);
+  }
+  const tx = db.transaction(() => {
+    for (const t of ["eod_reports", "notifications", "push_subscriptions", "target_awards"]) db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(id);
+    db.prepare("DELETE FROM partner_requests WHERE requester_id = ? OR decided_by = ?").run(id, id);
+    db.prepare("UPDATE audit_log SET user_id = NULL WHERE user_id = ?").run(id);
+    db.prepare("UPDATE targets SET created_by = ? WHERE created_by = ?").run(req.user.id, id);
+    db.prepare("UPDATE leaderboards SET created_by = ? WHERE created_by = ?").run(req.user.id, id);
+    db.prepare("DELETE FROM users WHERE id = ?").run(id);
+  });
+  tx();
+  audit(req.user.id, "user", id, "delete", { name: u.name });
   res.json({ ok: true });
 });
 

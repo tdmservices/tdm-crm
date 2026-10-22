@@ -11,7 +11,7 @@ export function AdminPage({ user, tab }: { user: User; tab: string }) {
     <div>
       <h1>Admin</h1>
       <Tabs tabs={TABS} value={tab} onChange={t => nav(`/admin?tab=${t}`)} />
-      {tab === "users" && <Users owner={owner} />}
+      {tab === "users" && <Users owner={owner} meId={user.id} />}
       {tab === "settings" && <Settings owner={owner} />}
       {tab === "integrations" && <Integrations owner={owner} />}
       {tab === "leaderboards" && <Leaderboards owner={owner} />}
@@ -23,7 +23,7 @@ export function AdminPage({ user, tab }: { user: User; tab: string }) {
 }
 
 /* ---------------- Users ---------------- */
-function Users({ owner }: { owner: boolean }) {
+function Users({ owner, meId }: { owner: boolean; meId: number }) {
   const q = useAsync(() => get("/users"), []);
   const [editing, setEditing] = useState<any | null>(null);
   const [adding, setAdding] = useState(false);
@@ -38,7 +38,7 @@ function Users({ owner }: { owner: boolean }) {
           <tr key={u.id} style={u.active ? undefined : { opacity: .5 }}>
             <td className="b">{u.name}</td><td className="small">{u.email}</td><td>{u.role}</td>{u.role !== "agent" ? <td colSpan={2} className="small muted">Partner, no commission</td> : <><td>{label(u.commission_model)}</td><td className="num">{u.commission_rate != null ? `${Math.round(u.commission_rate * 100)}%` : "—"}</td></>}
             <td>{u.active ? "✓" : "✗"}</td><td className="small">{fmtDateTime(u.last_login_at)}</td>
-            <td>{owner && <button className="btn sm muted" onClick={() => setEditing(u)}>Edit</button>}</td>
+            <td className="row" style={{ flexWrap: "nowrap" }}>{owner && <button className="btn sm muted" onClick={() => setEditing(u)}>Edit</button>}{owner && u.id !== meId && <button className="btn sm danger" title="Only possible for an account with no records" onClick={async () => { if (!confirm(`Remove ${u.name}? Only works if this account has no prospects, activities or commission.`)) return; try { await api("DELETE", `/users/${u.id}`); q.reload(); } catch (e) { alert((e as Error).message); } }}>Remove</button>}</td>
           </tr>
         ))}</tbody>
       </table></div>
