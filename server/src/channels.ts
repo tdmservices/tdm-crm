@@ -21,12 +21,20 @@ export async function sendEmail(to: string, subject: string, text: string) {
   } catch (e) { console.error("email failed", (e as Error).message); return false; }
 }
 
-/** WhatsApp via Meta Cloud API (text message; the recipient must have messaged the number in the last 24h or a template is needed). */
+/** WhatsApp via Meta Cloud API. With a template name configured (whatsapp_template, one {{1}} body parameter) the
+ *  message is delivered at any time; without one, free text only reaches people who wrote to the number in the last 24h. */
 export async function sendWhatsApp(phone: string, text: string) {
   const token = getSetting("whatsapp_token"), phoneId = getSetting("whatsapp_phone_id");
   if (!token || !phoneId || !phone) return false;
+  const template = (getSetting("whatsapp_template") ?? "").trim();
+  const lang = (getSetting("whatsapp_template_lang") ?? "en").trim() || "en";
+  const to = phone.replace(/\D/g, "");
+  const clean = text.replace(/\s+/g, " ").trim().slice(0, 1000);
+  const payload = template
+    ? { messaging_product: "whatsapp", to, type: "template", template: { name: template, language: { code: lang }, components: [{ type: "body", parameters: [{ type: "text", text: clean }] }] } }
+    : { messaging_product: "whatsapp", to, type: "text", text: { body: text } };
   try {
-    const res = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/messages`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ messaging_product: "whatsapp", to: phone.replace(/\D/g, ""), type: "text", text: { body: text } }) });
+    const res = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/messages`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     if (!res.ok) { const err = await res.text(); console.error("whatsapp failed", res.status, err.slice(0, 300)); db.prepare("INSERT INTO settings (key, value) VALUES ('whatsapp_last_error', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`${new Date().toISOString()} ${res.status} ${err.slice(0, 300)}`); }
     else db.prepare("INSERT INTO settings (key, value) VALUES ('whatsapp_last_error', '') ON CONFLICT(key) DO UPDATE SET value = ''").run();
     return res.ok;

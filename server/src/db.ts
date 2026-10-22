@@ -374,7 +374,7 @@ const defaultSettings: Record<string, string> = {
   display_currency: "PKR",
   // Phase 3 integrations (filled in by the Owner in Admin → Integrations)
   smtp_host: "", smtp_port: "587", smtp_user: "", smtp_pass: "", smtp_from: "",
-  whatsapp_token: "", whatsapp_phone_id: "",
+  whatsapp_token: "", whatsapp_phone_id: "", whatsapp_template: "", whatsapp_template_lang: "en",
   calendly_signing_key: "",
   meta_verify_token: "", meta_page_token: "", meta_app_secret: "",
   google_lead_key: "",
