@@ -16,6 +16,11 @@ import { paymentsRouter, commissionRouter, leaderboardRouter } from "./routes/mo
 import { targetsRouter } from "./routes/targets.js";
 import { todayRouter } from "./routes/today.js";
 import { reportsRouter } from "./routes/reports.js";
+import { scheduleRouter } from "./routes/schedule.js";
+import { webhooksRouter } from "./routes/webhooks.js";
+import { documentsRouter, portalRouter } from "./routes/documents.js";
+import { startJobs } from "./jobs.js";
+import { ensureVapid } from "./channels.js";
 
 export const app = express();
 app.use(cors());
@@ -34,6 +39,10 @@ app.use("/api/leaderboard", requireAuth, leaderboardRouter);
 app.use("/api/targets", requireAuth, targetsRouter);
 app.use("/api/today", requireAuth, todayRouter);
 app.use("/api/reports", requireAuth, reportsRouter);
+app.use("/api/prospects", requireAuth, scheduleRouter);
+app.use("/api/documents", requireAuth, documentsRouter);
+app.use("/api/portal", portalRouter);
+app.use("/api/webhooks", webhooksRouter);
 
 // Serve the built web app (Abdul's web version) when present.
 const webDist = path.resolve(process.cwd(), "../web/dist");
@@ -54,4 +63,6 @@ if (process.env.NODE_ENV !== "test") {
   app.listen(port, () => console.log(`TDM CRM API on :${port}`));
   refreshRates().then(r => console.log("FX", r.ok ? `rates fetched for ${r.date}` : `fetch failed (${r.error}); using last known rates`));
   setInterval(() => void refreshRates(), 6 * 60 * 60 * 1000);
+  try { ensureVapid(); } catch (e) { console.error("vapid", e); }
+  startJobs();
 }

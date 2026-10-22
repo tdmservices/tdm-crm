@@ -20,4 +20,8 @@ export function audit(userId: number | null, entity: string, entityId: number | 
 export function notify(userId: number, type: string, title: string, body?: string, prospectId?: number | null) {
   db.prepare("INSERT INTO notifications (user_id, type, title, body, prospect_id) VALUES (?, ?, ?, ?, ?)")
     .run(userId, type, title, body ?? null, prospectId ?? null);
+  if (process.env.NODE_ENV !== "test") void import("./channels.js").then(c => c.dispatch(userId, title, body, prospectId)).catch(() => {});
+}
+export function notifyManagement(type: string, title: string, body?: string, prospectId?: number | null) {
+  for (const m of db.prepare("SELECT id FROM users WHERE role IN ('owner','manager') AND active = 1").all() as { id: number }[]) notify(m.id, type, title, body, prospectId);
 }

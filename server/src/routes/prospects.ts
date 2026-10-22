@@ -7,6 +7,8 @@ import { audit, logActivity, notify } from "../log.js";
 import { toUsd } from "../fx.js";
 import { addDays, pkDate } from "../time.js";
 import { createPendingEntries, recomputeProfitSplit, isRetainerType } from "../commission.js";
+import { scheduleWithStatus } from "./schedule.js";
+import { randomBytes } from "node:crypto";
 
 export const prospectsRouter = Router();
 
@@ -79,7 +81,7 @@ prospectsRouter.get("/", (req, res) => {
   if (q.owner_id && isManagement(req.user)) { where.push("owner_id = ?"); params.push(Number(q.owner_id)); }
   if (q.unassigned === "1" && isManagement(req.user)) where.push("owner_id IS NULL");
   else if (!isManagement(req.user)) where.push("owner_id IS NOT NULL");
-  if (q.search) { where.push("(company LIKE ? OR contact_name LIKE ? OR email LIKE ?)"); const s = `%${q.search}%`; params.push(s, s, s); }
+  if (q.search) { where.push("(p.company LIKE ? OR p.contact_name LIKE ? OR p.email LIKE ?)"); const s = `%${q.search}%`; params.push(s, s, s); }
   if (q.after_close) { where.push("after_close_status = ?"); params.push(q.after_close); }
   const rows = db.prepare(
     `SELECT p.*, o.name AS owner_name, pa.name AS partner_name,
@@ -154,7 +156,19 @@ prospectsRouter.get("/:id", (req, res) => {
       ? db.prepare("SELECT c.*, u.name AS user_name FROM commission_entries c JOIN users u ON u.id = c.user_id WHERE prospect_id = ? ORDER BY created_at").all(id)
       : db.prepare("SELECT c.* FROM commission_entries c WHERE prospect_id = ? AND user_id = ? ORDER BY created_at").all(id, req.user.id),
     partner_requests: db.prepare("SELECT r.*, u.name AS requester_name FROM partner_requests r JOIN users u ON u.id = r.requester_id WHERE prospect_id = ? ORDER BY created_at DESC").all(id),
+    schedule: scheduleWithStatus(id),
+    documents: db.prepare("SELECT id, type, number, title, total, currency, issued_at, due_date, status FROM documents WHERE prospect_id = ? ORDER BY created_at DESC").all(id),
   });
+});
+
+/** Client portal link (Later phase): creates the token on first call. */
+prospectsRouter.post("/:id/portal-link", (req, res) => {
+  const p = loadProspect(Number(req.params.id));
+  if (!canSee(req.user, p)) throw forbidden();
+  if (!p.closed_won_at) throw bad("The portal is for won deals");
+  let token = p.portal_token as string | null;
+  if (!token || req.body?.rotate) { token = randomBytes(18).toString("base64url"); db.prepare("UPDATE prospects SET portal_token = ? WHERE id = ?").run(token, p.id); logActivity({ prospectId: p.id, userId: req.user.id, type: "portal_link", detail: req.body?.rotate ? "Portal link rotated" : "Portal link created" }); }
+  res.json({ token, path: `/#/portal/${token}` });
 });
 
 const editable = z.object({

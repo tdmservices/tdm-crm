@@ -7,6 +7,7 @@ import { audit, logActivity } from "../log.js";
 import { toUsd, usdToPkr } from "../fx.js";
 import { onPaymentRecorded, onPaymentReversed, payUser } from "../commission.js";
 import { rangeFor, isoBounds, previousRange } from "../time.js";
+import { metricValue, METRICS } from "./targets.js";
 
 export const paymentsRouter = Router();
 export const commissionRouter = Router();
@@ -14,16 +15,23 @@ export const commissionRouter = Router();
 /** Phase 1: simple payment-received entry per deal, recorded by Abdul or Adnan. */
 paymentsRouter.post("/", (req, res) => {
   if (!isManagement(req.user)) throw forbidden("Only Abdul or Adnan record payments");
-  const body = z.object({ prospect_id: z.number(), amount: z.number().positive(), currency: z.string().default("USD"), received_at: z.string(), label: z.string().optional(), note: z.string().optional() }).parse(req.body);
+  const body = z.object({ prospect_id: z.number(), amount: z.number().positive(), currency: z.string().default("USD"), received_at: z.string(), label: z.string().optional(), note: z.string().optional(), schedule_id: z.number().optional().nullable() }).parse(req.body);
   const p = db.prepare("SELECT * FROM prospects WHERE id = ?").get(body.prospect_id) as any;
   if (!p) throw notFound("Deal not found");
   if (!p.closed_won_at) throw bad("Payments can only be recorded on an approved Closed won deal");
   if (p.after_close_status === "retainer_finished") throw bad("This retainer is finished");
   const seq = ((db.prepare("SELECT COALESCE(MAX(sequence),0) s FROM payments WHERE prospect_id = ?").get(p.id) as any).s as number) + 1;
   const c = toUsd(body.amount, body.currency, body.received_at.slice(0, 10));
+  const line = body.schedule_id ? db.prepare("SELECT * FROM payment_schedule WHERE id = ? AND prospect_id = ?").get(body.schedule_id, p.id) as any : null;
+  if (body.schedule_id && !line) throw bad("That scheduled payment does not belong to this deal");
+  if (line?.payment_id) throw bad("That scheduled payment is already received");
   const tx = db.transaction(() => {
-    const r = db.prepare("INSERT INTO payments (prospect_id, sequence, label, amount, currency, amount_usd, fx_rate_used, fx_fallback, received_at, note, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(p.id, seq, body.label ?? (seq === 1 ? "First payment" : `Payment ${seq}`), body.amount, body.currency.toUpperCase(), c.amount_usd, c.rate, c.fallback ? 1 : 0, body.received_at, body.note ?? null, req.user.id);
+    const r = db.prepare("INSERT INTO payments (prospect_id, sequence, label, amount, currency, amount_usd, fx_rate_used, fx_fallback, received_at, note, recorded_by, schedule_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(p.id, seq, body.label ?? line?.name ?? (seq === 1 ? "First payment" : `Payment ${seq}`), body.amount, body.currency.toUpperCase(), c.amount_usd, c.rate, c.fallback ? 1 : 0, body.received_at, body.note ?? null, req.user.id, line?.id ?? null);
+    if (line) {
+      db.prepare("UPDATE payment_schedule SET payment_id = ? WHERE id = ?").run(Number(r.lastInsertRowid), line.id);
+      db.prepare("UPDATE documents SET status = 'paid' WHERE schedule_id = ? AND status IN ('sent','accepted')").run(line.id);
+    }
     onPaymentRecorded(Number(r.lastInsertRowid));
     logActivity({ prospectId: p.id, userId: req.user.id, type: "payment_received", detail: `${body.amount} ${body.currency.toUpperCase()} ($${c.amount_usd}) ${c.fallback ? "[fallback rate]" : ""}` });
     res.status(201).json({ id: r.lastInsertRowid, amount_usd: c.amount_usd, fx_fallback: c.fallback });
@@ -41,6 +49,7 @@ paymentsRouter.post("/:id/reverse", (req, res) => {
   const ageDays = Math.floor((Date.now() - new Date(pay.received_at).getTime()) / 86400000);
   const tx = db.transaction(() => {
     db.prepare("UPDATE payments SET reversed_at = datetime('now'), reversed_by = ?, note = COALESCE(note || ' | ', '') || ? WHERE id = ?").run(req.user.id, `Reversed: ${body.reason}`, pay.id);
+    db.prepare("UPDATE payment_schedule SET payment_id = NULL WHERE payment_id = ?").run(pay.id);
     onPaymentReversed(pay.id);
     logActivity({ prospectId: pay.prospect_id, userId: req.user.id, type: "payment_reversed", detail: `${body.reason} (${ageDays}d after receipt, window ${windowDays}d)` });
     audit(req.user.id, "payment", pay.id, "reverse", { reason: body.reason, age_days: ageDays, outside_window: ageDays > windowDays });
@@ -77,7 +86,7 @@ commissionRouter.get("/payouts", (req, res) => {
       COALESCE(SUM(CASE WHEN c.status='pending' THEN c.amount_usd END),0) AS pending,
       COALESCE(SUM(CASE WHEN c.status='paid' AND c.paid_at >= ? AND c.paid_at < ? THEN c.paid_amount_usd END),0) AS paid_this_month
     FROM users u LEFT JOIN commission_entries c ON c.user_id = u.id
-    WHERE u.role = 'agent' OR EXISTS (SELECT 1 FROM commission_entries x WHERE x.user_id = u.id)
+    WHERE u.role != 'owner' AND (u.role = 'agent' OR EXISTS (SELECT 1 FROM commission_entries x WHERE x.user_id = u.id))
     GROUP BY u.id ORDER BY payable DESC, u.name`).all(m.from, m.to);
   const entries = db.prepare("SELECT c.*, u.name AS user_name, p.company FROM commission_entries c JOIN users u ON u.id = c.user_id LEFT JOIN prospects p ON p.id = c.prospect_id WHERE c.status IN ('payable','pending') ORDER BY c.user_id, c.created_at").all();
   res.json({ people: rows, open_entries: entries });
@@ -117,10 +126,34 @@ leaderboardRouter.get("/", (req, res) => {
   const meetings = (uid: number, bb: { from: string; to: string }) => (db.prepare("SELECT COUNT(*) c FROM meetings WHERE credited_to = ? AND status IN ('booked','held') AND created_at >= ? AND created_at < ?").get(uid, bb.from, bb.to) as any).c as number;
   const commission = (uid: number, bb: { from: string; to: string }) => (db.prepare("SELECT COALESCE(SUM(CASE WHEN status='paid' THEN paid_amount_usd ELSE amount_usd END),0) s FROM commission_entries WHERE user_id = ? AND kind IN ('sales','true_up','clawback') AND status IN ('payable','paid') AND created_at >= ? AND created_at < ?").get(uid, bb.from, bb.to) as any).s as number;
   const rank = (rows: { id: number; name: string; total: number; previous: number | null }[]) => rows.sort((a, b2) => b2.total - a.total).map((x, i) => ({ rank: i + 1, ...x, is_me: x.id === req.user.id, badge: period === "month" && i < 3 ? ["gold", "silver", "bronze"][i] : null }));
+  const custom = (db.prepare("SELECT * FROM leaderboards WHERE active = 1 ORDER BY id").all() as any[]).map(lb => ({
+    id: lb.id, name: lb.name, metric: lb.metric,
+    rows: rank(agents.map(a => ({ id: a.id, name: a.name, total: metricValue(lb.metric, a.id, r), previous: prev ? metricValue(lb.metric, a.id, previousOf(r)) : null }))),
+  }));
   res.json({
     period, range: r,
     meetings: rank(agents.map(a => ({ id: a.id, name: a.name, total: meetings(a.id, b), previous: prev ? meetings(a.id, prev) : null }))),
     commission: rank(agents.map(a => { const t = commission(a.id, b); return { id: a.id, name: a.name, total: t, total_pkr: usdToPkr(t), previous: prev ? commission(a.id, prev) : null }; })),
+    custom,
   });
+});
+/** Abdul adds a board on any metric the CRM already counts, without new development. */
+leaderboardRouter.get("/custom", (req, res) => {
+  if (!isManagement(req.user)) throw forbidden();
+  res.json({ boards: db.prepare("SELECT * FROM leaderboards ORDER BY id").all(), metrics: METRICS });
+});
+leaderboardRouter.post("/custom", (req, res) => {
+  if (req.user.role !== "owner") throw forbidden();
+  const b = z.object({ name: z.string().min(1), metric: z.enum(METRICS) }).parse(req.body);
+  const r = db.prepare("INSERT INTO leaderboards (name, metric, created_by) VALUES (?, ?, ?)").run(b.name, b.metric, req.user.id);
+  audit(req.user.id, "leaderboard", Number(r.lastInsertRowid), "create", b);
+  res.status(201).json({ id: r.lastInsertRowid });
+});
+leaderboardRouter.patch("/custom/:id", (req, res) => {
+  if (req.user.role !== "owner") throw forbidden();
+  const b = z.object({ active: z.boolean().optional(), name: z.string().optional() }).parse(req.body);
+  if (b.active !== undefined) db.prepare("UPDATE leaderboards SET active = ? WHERE id = ?").run(b.active ? 1 : 0, Number(req.params.id));
+  if (b.name) db.prepare("UPDATE leaderboards SET name = ? WHERE id = ?").run(b.name, Number(req.params.id));
+  res.json({ ok: true });
 });
 const previousOf = previousRange;

@@ -264,9 +264,97 @@ CREATE TABLE IF NOT EXISTS audit_log (
   detail TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS payment_schedule (
+  id INTEGER PRIMARY KEY,
+  prospect_id INTEGER NOT NULL REFERENCES prospects(id),
+  kind TEXT NOT NULL CHECK (kind IN ('milestone','month')),
+  name TEXT NOT NULL,
+  percentage REAL,
+  amount REAL NOT NULL,
+  currency TEXT NOT NULL,
+  amount_usd REAL NOT NULL,
+  expected_date TEXT NOT NULL,
+  payment_id INTEGER REFERENCES payments(id),
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_schedule_prospect ON payment_schedule(prospect_id);
+
+CREATE TABLE IF NOT EXISTS leaderboards (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  metric TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  kind TEXT NOT NULL DEFAULT 'webpush',   -- webpush | fcm
+  endpoint TEXT NOT NULL UNIQUE,
+  keys_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+  id INTEGER PRIMARY KEY,
+  prospect_id INTEGER NOT NULL REFERENCES prospects(id),
+  type TEXT NOT NULL CHECK (type IN ('proposal','invoice')),
+  number TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  lines_json TEXT NOT NULL,          -- [{description, qty, unit_price}]
+  currency TEXT NOT NULL,
+  subtotal REAL NOT NULL,
+  tax_rate REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL,
+  notes TEXT,
+  issued_at TEXT NOT NULL,
+  due_date TEXT,
+  schedule_id INTEGER REFERENCES payment_schedule(id),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','sent','accepted','paid','void')),
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS job_log (
+  key TEXT PRIMARY KEY,
+  last_run TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS inbound_events (
+  id INTEGER PRIMARY KEY,
+  source TEXT NOT NULL,              -- calendly | meta | google | chatflow | imap
+  external_id TEXT,
+  payload TEXT,
+  outcome TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (source, external_id)
+);
 `;
 
 db.exec(SCHEMA);
+
+function addColumn(table: string, col: string, def: string) {
+  const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(c => c.name);
+  if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+}
+addColumn("prospects", "payment_structure", "TEXT");          // full_upfront | milestones | monthly
+addColumn("prospects", "retainer_monthly_amount", "REAL");
+addColumn("prospects", "retainer_billing_day", "INTEGER");
+addColumn("prospects", "retainer_start_month", "TEXT");       // YYYY-MM
+addColumn("prospects", "retainer_min_months", "INTEGER");
+addColumn("prospects", "portal_token", "TEXT");
+addColumn("payments", "schedule_id", "INTEGER REFERENCES payment_schedule(id)");
+addColumn("users", "notify_email", "INTEGER NOT NULL DEFAULT 1");
+addColumn("users", "notify_whatsapp", "INTEGER NOT NULL DEFAULT 0");
+addColumn("users", "notify_push", "INTEGER NOT NULL DEFAULT 1");
+addColumn("users", "phone", "TEXT");
+addColumn("meetings", "external_id", "TEXT");
+addColumn("meetings", "invitee_email", "TEXT");
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_prospects_portal ON prospects(portal_token)");
 
 const defaultSettings: Record<string, string> = {
   clawback_days: "30",
@@ -280,6 +368,21 @@ const defaultSettings: Record<string, string> = {
   fx_fallback_eur: "1.09",
   overdue_alert_days: "2",
   proposal_chase_days: "5",
+  agency_name: "TDM",
+  agency_logo_url: "",
+  display_currency: "PKR",
+  // Phase 3 integrations (filled in by the Owner in Admin → Integrations)
+  smtp_host: "", smtp_port: "587", smtp_user: "", smtp_pass: "", smtp_from: "",
+  whatsapp_token: "", whatsapp_phone_id: "",
+  calendly_signing_key: "",
+  meta_verify_token: "", meta_page_token: "", meta_app_secret: "",
+  google_lead_key: "",
+  chatflow_key: "",
+  imap_host: "", imap_user: "", imap_pass: "",
+  reminder_morning_hour: "9", reminder_eod_hour: "18",
+  owner_alert_email: "",
+  invoice_prefix: "INV", proposal_prefix: "PRO", tax_rate: "0",
+  agency_address: "", agency_bank_details: "",
 };
 const insSetting = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
 for (const [k, v] of Object.entries(defaultSettings)) insSetting.run(k, v);

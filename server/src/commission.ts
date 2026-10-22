@@ -19,7 +19,7 @@ type Prospect = {
   engagement_model: string | null; deal_value_usd: number | null; estimated_cost_usd: number | null; actual_cost_usd: number | null;
   retainer_finished_at: string | null;
 };
-type User = { id: number; commission_model: "profit_split" | "revenue_share"; commission_rate: number };
+type User = { id: number; role?: string; commission_model: "profit_split" | "revenue_share"; commission_rate: number };
 
 const RETAINER_FIRST = 0.30;
 const RETAINER_LATER = 0.10;
@@ -43,12 +43,14 @@ export function createPendingEntries(prospectId: number) {
   }
 }
 
+/** People who earn commission on a deal. The Owner keeps everything, so owner accounts never get an entry;
+ *  an agent sharing a deal with the Owner is paid as if alone. */
 function participants(p: Prospect): User[] {
-  const get = db.prepare("SELECT id, commission_model, commission_rate FROM users WHERE id = ?");
+  const get = db.prepare("SELECT id, role, commission_model, commission_rate FROM users WHERE id = ?");
   const list: User[] = [];
   if (p.owner_id) list.push(get.get(p.owner_id) as User);
   if (p.partner_id) list.push(get.get(p.partner_id) as User);
-  return list.filter(Boolean);
+  return list.filter(u => u && u.role !== "owner");
 }
 
 /**

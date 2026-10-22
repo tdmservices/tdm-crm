@@ -54,16 +54,44 @@ usersRouter.patch("/:id", requireRole("owner"), (req, res) => {
   res.json({ ok: true });
 });
 
+/** Own notification preferences and phone (for WhatsApp alerts). */
+usersRouter.patch("/me/preferences", (req, res) => {
+  const b = z.object({ notify_email: z.boolean().optional(), notify_whatsapp: z.boolean().optional(), notify_push: z.boolean().optional(), phone: z.string().optional().nullable() }).parse(req.body);
+  const sets: string[] = []; const vals: unknown[] = [];
+  for (const [k, v] of Object.entries(b)) if (v !== undefined) { sets.push(`${k} = ?`); vals.push(typeof v === "boolean" ? (v ? 1 : 0) : v); }
+  if (sets.length) db.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).run(...vals, req.user.id);
+  res.json(db.prepare("SELECT notify_email, notify_whatsapp, notify_push, phone FROM users WHERE id = ?").get(req.user.id));
+});
+usersRouter.get("/me/preferences", (req, res) => {
+  res.json({ ...(db.prepare("SELECT notify_email, notify_whatsapp, notify_push, phone FROM users WHERE id = ?").get(req.user.id) as object), vapid_public: getSetting("vapid_public") ?? null, push_count: (db.prepare("SELECT COUNT(*) c FROM push_subscriptions WHERE user_id = ?").get(req.user.id) as any).c });
+});
+usersRouter.post("/me/push", (req, res) => {
+  const b = z.object({ endpoint: z.string().url(), keys: z.object({ p256dh: z.string(), auth: z.string() }) }).parse(req.body);
+  db.prepare("INSERT INTO push_subscriptions (user_id, kind, endpoint, keys_json) VALUES (?, 'webpush', ?, ?) ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, keys_json = excluded.keys_json").run(req.user.id, b.endpoint, JSON.stringify(b.keys));
+  res.json({ ok: true });
+});
+usersRouter.delete("/me/push", (req, res) => {
+  const b = z.object({ endpoint: z.string() }).parse(req.body);
+  db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?").run(b.endpoint, req.user.id);
+  res.json({ ok: true });
+});
+
 /* ---- Settings ---- */
 export const settingsRouter = Router();
-settingsRouter.get("/", requireRole("owner", "manager"), (_req, res) => {
+const SECRET_KEYS = ["smtp_pass", "whatsapp_token", "calendly_signing_key", "meta_page_token", "meta_app_secret", "google_lead_key", "chatflow_key", "imap_pass", "vapid_private"];
+settingsRouter.get("/", requireRole("owner", "manager"), (req, res) => {
   const rows = db.prepare("SELECT key, value FROM settings").all() as { key: string; value: string }[];
-  res.json(Object.fromEntries(rows.map(r => [r.key, r.value])));
+  const out = Object.fromEntries(rows.map(r => [r.key, req.user.role === "owner" || !SECRET_KEYS.includes(r.key) ? r.value : (r.value ? "••••••" : "")]));
+  res.json(out);
+});
+/** Branding visible to everyone (agency name, logo, display currency). */
+settingsRouter.get("/branding", (_req, res) => {
+  res.json({ agency_name: getSetting("agency_name"), agency_logo_url: getSetting("agency_logo_url"), display_currency: getSetting("display_currency") });
 });
 settingsRouter.put("/", requireRole("owner"), (req, res) => {
   const body = z.record(z.string(), z.string()).parse(req.body);
-  for (const [k, v] of Object.entries(body)) setSetting(k, v);
-  audit(req.user.id, "settings", null, "update", body);
+  for (const [k, v] of Object.entries(body)) { if (v === "••••••") continue; setSetting(k, v); }
+  audit(req.user.id, "settings", null, "update", Object.fromEntries(Object.keys(body).map(k => [k, SECRET_KEYS.includes(k) ? "[secret]" : body[k]])));
   res.json({ ok: true });
 });
 settingsRouter.get("/rates", (_req, res) => {
