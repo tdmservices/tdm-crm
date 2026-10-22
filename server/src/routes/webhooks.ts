@@ -120,6 +120,51 @@ webhooksRouter.post("/google", (req, res) => {
   res.json({ ok: true });
 });
 
+/* ---- WhatsApp Cloud API webhook: callback URL /api/webhooks/whatsapp, verify token = whatsapp_verify_token ---- */
+webhooksRouter.get("/whatsapp", (req, res) => {
+  if (req.query["hub.mode"] === "subscribe" && getSetting("whatsapp_verify_token") && req.query["hub.verify_token"] === getSetting("whatsapp_verify_token")) return res.send(req.query["hub.challenge"]);
+  res.sendStatus(403);
+});
+webhooksRouter.post("/whatsapp", (req, res) => {
+  const secret = getSetting("meta_app_secret");
+  if (secret) {
+    const sig = String(req.headers["x-hub-signature-256"] ?? "").replace("sha256=", "");
+    const expected = crypto.createHmac("sha256", secret).update(JSON.stringify(req.body)).digest("hex");
+    if (sig !== expected) throw new HttpError(401, "Bad Meta signature");
+  }
+  res.json({ ok: true });
+  const uid = systemUser();
+  for (const entry of req.body?.entry ?? []) for (const ch of entry.changes ?? []) {
+    const v = ch.value ?? {};
+    const names: Record<string, string> = {};
+    for (const c of v.contacts ?? []) names[String(c.wa_id)] = c.profile?.name ?? "";
+    for (const m of v.messages ?? []) {
+      const id = String(m.id ?? ""); if (!id || seen("whatsapp", id)) continue;
+      const from = String(m.from ?? ""); const text = m.text?.body ?? (m.type ? `[${m.type} message]` : "");
+      const ts = m.timestamp ? new Date(Number(m.timestamp) * 1000).toISOString() : undefined;
+      const norm = normalisePhone("+" + from);
+      const p = norm ? db.prepare("SELECT * FROM prospects WHERE phone_norm = ?").get(norm) as any : null;
+      if (!p) {
+        const staff = norm ? db.prepare("SELECT id FROM users WHERE phone IS NOT NULL AND phone != '' AND substr(replace(replace(replace(phone,' ',''),'-',''),'+',''), -10) = ?").get(norm) as any : null;
+        if (staff) { record("whatsapp", id, m, "message from staff number, ignored"); continue; }   // a team member texting the alert number
+        const out = createInboundLead("WhatsApp", { contact_name: names[from] || `+${from}`, phone: "+" + from, source: "inbound", note: text });
+        record("whatsapp", id, m, `new lead ${out.id}`); continue;
+      }
+      const owner = p.owner_id ?? uid;
+      db.prepare("INSERT INTO notes (prospect_id, user_id, body, created_at) VALUES (?, ?, ?, COALESCE(?, datetime('now')))").run(p.id, owner, `WhatsApp from prospect: ${text}`, ts ?? null);
+      if (p.stage === "contacted") { db.prepare("UPDATE prospects SET stage = 'replied', is_cold = 0, updated_at = datetime('now') WHERE id = ?").run(p.id); logActivity({ prospectId: p.id, userId: owner, type: "stage_change", detail: "contacted → replied (WhatsApp reply)" }); }
+      if (p.owner_id) notify(p.owner_id, "whatsapp_reply", `WhatsApp reply: ${p.company}`, text.slice(0, 120), p.id);
+      record("whatsapp", id, m, `prospect ${p.id}`);
+    }
+    for (const st of v.statuses ?? []) {
+      if (st.status === "failed") {
+        const err = (st.errors ?? []).map((e: any) => `${e.code} ${e.title ?? ""} ${e.message ?? ""}`).join("; ");
+        db.prepare("INSERT INTO settings (key, value) VALUES ('whatsapp_last_error', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`${new Date().toISOString()} delivery to ${st.recipient_id} failed: ${err || "unknown"}`);
+      }
+    }
+  }
+});
+
 /* ---- ChatFlow (WhatsApp conversations): POST {key, phone, direction: 'in'|'out', text, agent_email?, timestamp?, id?} ---- */
 webhooksRouter.post("/chatflow", (req, res) => {
   if (!getSetting("chatflow_key") || req.body?.key !== getSetting("chatflow_key")) throw new HttpError(401, "Bad ChatFlow key");
