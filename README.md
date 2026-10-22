@@ -4,7 +4,11 @@ One shared system for every prospect, deal and commission at TDM. If it is not i
 
 Built to the product brief of 19 October 2026 (Phase 1, sales core). Phase 2 payment schedules and Phase 3 automation are not in this build, but the data model already carries the fields they need.
 
-## What is in Phase 1
+## What is built
+
+All three phases of the brief plus the "Later" items are implemented. Integrations that depend on third-party accounts (Calendly, Meta, Google Ads, SMTP, WhatsApp Cloud API, an IMAP mailbox, ChatFlow) are complete on the CRM side and switched on by entering the keys in Admin → Integrations.
+
+### Phase 1, sales core
 
 - Users and roles (Owner, Manager, Sales agent) with a per-person commission model and rate
 - Prospect pipeline with fixed stages, required fields per stage, duplicate detection on email, phone and website domain, partner requests and 15/15 shared deals, Unassigned pool for imported and inbound leads
@@ -21,6 +25,29 @@ Built to the product brief of 19 October 2026 (Phase 1, sales core). Phase 2 pay
 - Offline entry with device timestamps and an outbox that syncs when back online
 - USD conversion from a daily rate service with last-known fallback (flagged, final), USD frozen on every entry
 - Sideloaded APK version gate (minimum version and download link set in Settings)
+
+### Phase 2, money
+- Payment schedule on every won deal: full upfront, milestones (percent or amount, must add up to the deal value) or monthly retainer terms (amount, billing day, start month, minimum length). Lines show Expected, Received or Overdue.
+- Payments recorded against a schedule line; invoices generated from a line and auto-marked paid when the payment arrives
+- Retainer months roll forward automatically; unpaid retainer and overdue payment alerts on Abdul's overview and as notifications
+- Project cost (estimated then actual) for the profit split model with true-up
+
+### Phase 3, automation
+- Notification channels per user: web push (browser), email (SMTP), WhatsApp (Meta Cloud API). Every in-app notification fans out to the channels the user has on.
+- Scheduled reminders: morning digest, end-of-day report reminder, overdue payment alerts, owner alerts (zero activity, follow-ups overdue > 2 days, project overdue)
+- Email activity capture: agents BCC the CRM mailbox; sent mail is logged as "emailed", prospect replies become notes and move the stage to Replied
+- Calendly webhook: bookings become meeting records credited to the owner; unknown invitees land in the Unassigned pool; cancellations become no-shows with a follow-up
+- Meta Lead Ads and Google Ads lead-form webhooks create leads in the Unassigned pool with the ad set or campaign as the campaign tag
+- Forecast report, and custom leaderboards on any metric the CRM counts
+
+### Later
+- Client portal: a per-deal link (no login) showing the payment schedule, received payments and sent invoices
+- ChatFlow / WhatsApp conversation webhook: outbound messages logged as activities, inbound replies logged as notes and advancing the stage
+- Proposals and invoices generated from the deal, numbered, printable to PDF, with status tracking
+- Packaging for other agencies: agency name, logo, address, bank details, display currency and document prefixes in Admin → Integrations; local time zone via `TZ_OFFSET_HOURS`; one deployment per agency
+
+### Commission rules as decided
+- Owner keeps everything: no commission entry is ever created for an owner account. An agent sharing a deal with the Owner is paid as if alone.
 
 ## Layout
 
@@ -44,7 +71,7 @@ npm run build
 PORT=4000 JWT_SECRET=change-me DB_PATH=/var/tdm/tdm.db npm start
 ```
 
-Environment variables for the server: `PORT`, `JWT_SECRET`, `DB_PATH`, `FX_URL` (defaults to open.er-api.com, free, no key, covers PKR, AED and GBP).
+Environment variables for the server: `PORT`, `JWT_SECRET`, `DB_PATH`, `FX_URL` (defaults to open.er-api.com, free, no key, covers PKR, AED and GBP), `TZ_OFFSET_HOURS` (default 5 for Pakistan).
 
 Tests (end-to-end API scenarios covering the commission rules):
 
@@ -105,6 +132,21 @@ cd android && ./gradlew assembleRelease                  # or assembleDebug for 
 ```
 
 The APK lands in `web/android/app/build/outputs/apk/`. Abdul sends it to the team. When a new build is released, bump `APP_VERSION` in `web/src/lib/api.ts`, then set `min_app_version` and `apk_download_url` in Admin → Settings; older installs are blocked at login with the download link.
+
+## Switching on the integrations
+
+All in Admin → Integrations (Owner only; the Manager sees them masked). Each card shows the exact URL to paste into the other service.
+
+| Integration | What you need | Where it goes |
+|---|---|---|
+| Email alerts | SMTP host, port, user, password, from address (Gmail: an App Password) | SMTP card |
+| WhatsApp alerts | Meta Cloud API access token and phone number ID | WhatsApp card; each user turns WhatsApp alerts on in their profile and enters their number |
+| Push alerts | Nothing to configure; keys are generated on first start | Each user turns push on in their profile (browser only) |
+| Calendly | Create a webhook subscription for invitee.created and invitee.canceled pointing at `/api/webhooks/calendly`; paste the signing key | Calendly card |
+| Meta Lead Ads | App secret, a verify token you choose, and a page access token; subscribe the page to leadgen with callback `/api/webhooks/meta` | Meta card |
+| Google Ads lead forms | Choose a key; set the webhook URL `/api/webhooks/google` and that key on the lead form extension | Google card |
+| ChatFlow | Choose a key; have ChatFlow POST each message to `/api/webhooks/chatflow` with `{key, phone, direction, text, agent_email, timestamp, id}` | ChatFlow card |
+| Email capture | An IMAP mailbox (host, user, password) that agents BCC on outreach | IMAP card |
 
 ## Day boundaries and money
 

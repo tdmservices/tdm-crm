@@ -1,5 +1,6 @@
-// All day boundaries use Pakistan time (Asia/Karachi, UTC+5, no DST).
-const PK_OFFSET_MS = 5 * 60 * 60 * 1000;
+// All day boundaries use the agency's local time. Default is Pakistan time (UTC+5, no DST).
+// Another agency packages the app by setting TZ_OFFSET_HOURS at deployment (whole or half hours, no DST handling).
+const PK_OFFSET_MS = Number(process.env.TZ_OFFSET_HOURS ?? 5) * 60 * 60 * 1000;
 
 export function nowIso(): string {
   return new Date().toISOString();
