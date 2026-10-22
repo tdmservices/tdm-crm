@@ -43,14 +43,15 @@ export function createPendingEntries(prospectId: number) {
   }
 }
 
-/** People who earn commission on a deal. The Owner keeps everything, so owner accounts never get an entry;
- *  an agent sharing a deal with the Owner is paid as if alone. */
+/** People who earn commission on a deal. Only sales agents earn commission: the Owner (CEO) and Manager (CRO) are
+ *  partners in the business and keep everything, so their accounts never get an entry; an agent sharing a deal
+ *  with either of them is paid as if alone. */
 function participants(p: Prospect): User[] {
   const get = db.prepare("SELECT id, role, commission_model, commission_rate FROM users WHERE id = ?");
   const list: User[] = [];
   if (p.owner_id) list.push(get.get(p.owner_id) as User);
   if (p.partner_id) list.push(get.get(p.partner_id) as User);
-  return list.filter(u => u && u.role !== "owner");
+  return list.filter(u => u && u.role === "agent");
 }
 
 /**

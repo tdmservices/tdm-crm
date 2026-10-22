@@ -86,7 +86,7 @@ commissionRouter.get("/payouts", (req, res) => {
       COALESCE(SUM(CASE WHEN c.status='pending' THEN c.amount_usd END),0) AS pending,
       COALESCE(SUM(CASE WHEN c.status='paid' AND c.paid_at >= ? AND c.paid_at < ? THEN c.paid_amount_usd END),0) AS paid_this_month
     FROM users u LEFT JOIN commission_entries c ON c.user_id = u.id
-    WHERE u.role != 'owner' AND (u.role = 'agent' OR EXISTS (SELECT 1 FROM commission_entries x WHERE x.user_id = u.id))
+    WHERE u.role = 'agent' OR EXISTS (SELECT 1 FROM commission_entries x WHERE x.user_id = u.id AND x.status IN ('payable','pending'))
     GROUP BY u.id ORDER BY payable DESC, u.name`).all(m.from, m.to);
   const entries = db.prepare("SELECT c.*, u.name AS user_name, p.company FROM commission_entries c JOIN users u ON u.id = c.user_id LEFT JOIN prospects p ON p.id = c.prospect_id WHERE c.status IN ('payable','pending') ORDER BY c.user_id, c.created_at").all();
   res.json({ people: rows, open_entries: entries });

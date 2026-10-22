@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { cachedGet, offlineWrite, post, patch, get, usd, usd2, pkr, label, fmtDate, fmtDateTime, todayPk, addDays, type User } from "../lib/api";
 import { Modal, Field, Select, Err, Stat, Stage, Progress, useAsync, Link, nav } from "../lib/ui";
+import { ColumnChart, Donut } from "../lib/charts";
+import { AddProspectModal, AddClosedDealModal } from "./Pipeline";
 
 const ACTIONS = ["emailed", "called", "messaged", "met", "no_answer"] as const;
 const LOST = ["price", "no_response", "went_elsewhere", "bad_fit", "timing"] as const;
@@ -84,6 +86,8 @@ export function TodayPage({ user }: { user: User }) {
   const [taskModal, setTaskModal] = useState<{ task: any; mode: "done" | "blocked" } | null>(null);
   const [eod, setEod] = useState(""); const [eodErr, setEodErr] = useState<unknown>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [addProspect, setAddProspect] = useState(false);
+  const [addClosed, setAddClosed] = useState(false);
   if (loading && !data) return <div className="center">Loading your day…</div>;
   if (error && !data) return <Err e={error} />;
   const t = data!.data; const stale = data!.stale;
@@ -97,10 +101,56 @@ export function TodayPage({ user }: { user: User }) {
     const tw = metric ? targetFor(metric, "week") : null, tm = metric ? targetFor(metric, "month") : null;
     return <tr key={key}><td>{lbl}</td><td className="num">{fmt(n.week[key])}{tw ? <span className="muted small"> / {tw.number} · {Math.max(0, tw.number - n.week[key])} to go</span> : null}</td><td className="num">{fmt(n.month[key])}{tm ? <span className="muted small"> / {tm.number} · {Math.max(0, tm.number - n.month[key])} to go</span> : null}</td></tr>;
   };
+  const totalProspects = (t.pipeline as any[]).reduce((s: number, x: any) => s + x.count, 0);
+  const weekTarget = (metric: string) => t.targets.cards.find((c: any) => c.metric === metric && c.period === "week")?.number ?? 0;
+  const weekSeries = [
+    { label: "Done this week", values: [n.week.activities, n.week.meetings_booked, n.week.leads_added] },
+    { label: "Weekly target", values: [weekTarget("activities"), weekTarget("meetings_booked"), weekTarget("leads_added")], color: "var(--line)" },
+  ];
+  const hasWeekTargets = weekSeries[1].values.some(v => v > 0);
+  const stageColor: Record<string, string> = { new_lead: "#9ca3af", contacted: "#0891b2", replied: "#2563eb", meeting_booked: "#7c3aed", meeting_held: "#db2777", proposal_sent: "#d97706", negotiation: "#ea580c", closed_won: "#16a34a", closed_lost: "#dc2626" };
+  const donutParts = (t.pipeline as any[]).map((x: any) => ({ label: label(x.stage), value: x.count, color: stageColor[x.stage] }));
+  const dueTodayCount = t.due_today.follow_ups.length + t.due_today.tasks.length + t.due_today.meetings.length;
   return (
     <div>
       <div className="row between"><h1>Today · {fmtDate(t.today)}</h1><span className="muted small">{user.name}</span></div>
       {stale && <div className="info">Offline: showing the last saved copy of your day.</div>}
+
+      <div className="kpi-strip">
+        <div className={`kpi ${n.activities_today >= n.daily_min ? "ok" : "warn"}`}>
+          <div className="v">{n.activities_today} <span className="muted" style={{ fontSize: 14, fontWeight: 400 }}>/ {n.daily_min}</span></div>
+          <div className="l">Outreach today</div>
+          <div style={{ marginTop: 6 }}><Progress done={n.activities_today} total={n.daily_min} won={n.activities_today >= n.daily_min} /></div>
+        </div>
+        <div className={`kpi ${overdueCount ? "red" : ""}`}><div className="v">{dueTodayCount}</div><div className="l">Due today</div><div className="sub">{overdueCount ? `${overdueCount} overdue` : "Nothing overdue"}</div></div>
+        <div className="kpi"><div className="v">{t.meetings_week.length}</div><div className="l">Meetings this week</div><div className="sub">{n.month.meetings_booked} booked this month</div></div>
+        <div className="kpi ok"><div className="v">{usd2(n.commission_due)}</div><div className="l">Commission due to me</div><div className="sub">{usd(n.month.commission_earned)} earned this month</div></div>
+      </div>
+
+      {totalProspects === 0 && (
+        <div className="card ok getting-started">
+          <h2>Getting started</h2>
+          <p className="small muted">Your pipeline is empty. Five steps and the CRM starts working for you:</p>
+          <ol>
+            <li><a onClick={() => setAddProspect(true)}>Add your first prospect</a>. Every prospect you are working on, even if you only emailed once.</li>
+            <li><a onClick={() => setAddClosed(true)}>Add the deals you have already closed</a> with their closing date, so your commission history is right.</li>
+            <li>Log every call, email and message on the prospect. Logging is what counts towards targets and the leaderboard.</li>
+            <li>Always set the next follow-up date. The Today view is built from those dates.</li>
+            <li>Send a one-line end-of-day report before you stop, from the bottom of this page.</li>
+          </ol>
+        </div>
+      )}
+
+      {totalProspects > 0 && (
+        <div className="charts-row">
+          <div className="card">
+            <h3>My week{hasWeekTargets ? " vs target" : ""}</h3>
+            <ColumnChart series={hasWeekTargets ? weekSeries : [weekSeries[0]]} categories={["Outreach", "Meetings", "Leads added"]} />
+            {!hasWeekTargets && <div className="small muted">Abdul has not set weekly targets yet.</div>}
+          </div>
+          <div className="card"><h3>My pipeline by stage</h3><Donut parts={donutParts} /></div>
+        </div>
+      )}
       {t.notifications.length > 0 && (
         <div className="card">
           <div className="row between"><h3>New</h3><button className="btn sm muted" onClick={markRead}>Mark all read</button></div>
@@ -190,6 +240,8 @@ export function TodayPage({ user }: { user: User }) {
         <Err e={eodErr} />
       </div>
       {logFor && <LogActionModal prospect={logFor} onClose={() => setLogFor(null)} onDone={reload} />}
+      {addProspect && <AddProspectModal user={user} onClose={() => setAddProspect(false)} onCreated={id => { reload(); if (id) nav(`/prospects/${id}`); }} />}
+      {addClosed && <AddClosedDealModal user={user} onClose={() => setAddClosed(false)} onCreated={id => { reload(); if (id) nav(`/prospects/${id}`); }} />}
       {taskModal && <TaskDoneModal task={taskModal.task} mode={taskModal.mode} onClose={() => setTaskModal(null)} onDone={reload} />}
     </div>
   );

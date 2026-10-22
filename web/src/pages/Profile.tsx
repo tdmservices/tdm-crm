@@ -13,7 +13,7 @@ function urlBase64ToUint8Array(base64: string) {
 const pushSupported = () => typeof navigator !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 
 function modelText(u: User) {
-  if (u.role === "owner") return "Owner keeps everything, no commission";
+  if (u.role !== "agent") return "Partner in the business, no commission";
   if (u.commission_model === "profit_split") return "Profit split 50/50 after project cost";
   return `Revenue share ${Math.round((u.commission_rate ?? 0) * 100)}%`;
 }

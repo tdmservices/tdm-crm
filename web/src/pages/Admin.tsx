@@ -36,7 +36,7 @@ function Users({ owner }: { owner: boolean }) {
         <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Model</th><th className="num">Rate</th><th>Active</th><th>Last login</th><th /></tr></thead>
         <tbody>{((q.data ?? []) as any[]).map(u => (
           <tr key={u.id} style={u.active ? undefined : { opacity: .5 }}>
-            <td className="b">{u.name}</td><td className="small">{u.email}</td><td>{u.role}</td>{u.role === "owner" ? <td colSpan={2} className="small muted">Owner keeps everything</td> : <><td>{label(u.commission_model)}</td><td className="num">{u.commission_rate != null ? `${Math.round(u.commission_rate * 100)}%` : "—"}</td></>}
+            <td className="b">{u.name}</td><td className="small">{u.email}</td><td>{u.role}</td>{u.role !== "agent" ? <td colSpan={2} className="small muted">Partner, no commission</td> : <><td>{label(u.commission_model)}</td><td className="num">{u.commission_rate != null ? `${Math.round(u.commission_rate * 100)}%` : "—"}</td></>}
             <td>{u.active ? "✓" : "✗"}</td><td className="small">{fmtDateTime(u.last_login_at)}</td>
             <td>{owner && <button className="btn sm muted" onClick={() => setEditing(u)}>Edit</button>}</td>
           </tr>
@@ -71,7 +71,7 @@ function UserForm({ user, onClose, onSaved }: { user?: any; onClose: () => void;
         {f.role !== "owner" && <Field label="Commission model"><Select value={f.commission_model} onChange={v => setF({ ...f, commission_model: v })} options={[{ value: "revenue_share", label: "Revenue share (% of payment)" }, { value: "profit_split", label: "Profit split (50/50 after cost)" }]} /></Field>}
         {f.role !== "owner" && <Field label="Rate (%)" hint={f.commission_model === "profit_split" ? "Ignored for profit split (always 50/50)" : "Share of each payment received"}><input type="number" value={f.rate} onChange={e => setF({ ...f, rate: e.target.value })} /></Field>}
       </div>
-      {f.role === "owner" && <div className="info">Owner keeps everything: no commission is ever calculated for an owner account.</div>}
+      {f.role !== "agent" && <div className="info">Partners in the business (Owner and Manager) earn no commission; the fields below apply to sales agents only.</div>}
       {user && <label className="row small" style={{ marginBottom: 10 }}><input type="checkbox" style={{ width: "auto" }} checked={f.active} onChange={e => setF({ ...f, active: e.target.checked })} /> Active (deactivated users cannot log in; their records stay and can be reassigned)</label>}
       <p className="small muted">Retainer and dedicated-resource deals always use 30% first month then 10%, whatever the model. Changes apply to deals closed after today.</p>
       <Err e={err} />

@@ -1,10 +1,19 @@
 import { useState } from "react";
-import { get, post, patch, cachedGet, usd, label, fmtDate, fmtDateTime, type User } from "../lib/api";
+import { get, post, patch, cachedGet, usd, label, fmtDate, fmtDateTime, todayPk, addDays, type User } from "../lib/api";
 import { useAsync, Err, Empty, Modal, Field, Link, Stat } from "../lib/ui";
+import { Funnel, ColumnChart, BarChart } from "../lib/charts";
+
+function monthStart(d: string) { return d.slice(0, 7) + "-01"; }
+function monthLabel(ym: string) { const [y, m] = ym.split("-").map(Number); return new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-GB", { month: "short", year: "2-digit", timeZone: "UTC" }); }
+function lastMonths(n: number) { const out: string[] = []; const t = todayPk(); let [y, m] = t.slice(0, 7).split("-").map(Number); for (let i = 0; i < n; i++) { out.unshift(`${y}-${String(m).padStart(2, "0")}`); m--; if (m === 0) { m = 12; y--; } } return out; }
 
 export function TeamPage({ user }: { user: User }) {
   void user;
   const q = useAsync(() => cachedGet("team", "/today/team"), []);
+  const today = todayPk();
+  const rev = useAsync(() => get(`/reports/revenue?from=${addDays(monthStart(today), -150).slice(0, 7)}-01&to=${today}`).catch(() => null), []);
+  const revMonth = useAsync(() => get(`/reports/revenue?from=${monthStart(today)}&to=${today}`).catch(() => null), []);
+  const funnel = useAsync(() => get(`/reports/funnel?from=2000-01-01&to=${today}`).catch(() => null), []);
   const [err, setErr] = useState<unknown>(null);
   const [decline, setDecline] = useState<any | null>(null);
   const [declineNote, setDeclineNote] = useState("");
@@ -19,10 +28,55 @@ export function TeamPage({ user }: { user: User }) {
   const eodByDate: Record<string, any[]> = {};
   for (const e of d.eod_log as any[]) (eodByDate[e.report_date] ??= []).push(e);
 
+  const pipeline: any[] = d.pipeline ?? [];
+  const totalProspects = pipeline.reduce((s, x) => s + x.count, 0);
+  const openValue = pipeline.filter(x => ["proposal_sent", "negotiation"].includes(x.stage)).reduce((s, x) => s + (x.value_usd ?? 0), 0);
+  const wonMonth = (revMonth.data?.by_month ?? []).reduce((a: any, m: any) => ({ deals: a.deals + m.deals, value: a.value + m.value_usd }), { deals: 0, value: 0 });
+  const receivedMonth = revMonth.data?.received_usd ?? 0;
+  const meetingsMonth = people.reduce((s, p) => s + p.meetings_booked_month, 0);
+  const outreachWeek = people.reduce((s, p) => s + p.activities_week, 0);
+  const overdueCount = d.overdue_all.length + people.reduce((s, p) => s + p.overdue_tasks, 0) + (d.overdue_payments ?? []).length + d.delivery_overdue.length;
+  const funnelRows: any[] = funnel.data ?? [];
+  const fsum = (k: string) => funnelRows.reduce((s, r) => s + (r[k] ?? 0), 0);
+  const funnelStages = [{ label: "Leads", count: fsum("leads") }, { label: "Contacted", count: fsum("contacted") }, { label: "Replied", count: fsum("replied") }, { label: "Meeting", count: fsum("meeting") }, { label: "Proposal", count: fsum("proposal") }, { label: "Won", count: fsum("won") }];
+  const months = lastMonths(6);
+  const byMonth: Record<string, any> = Object.fromEntries((rev.data?.by_month ?? []).map((m: any) => [m.month, m]));
+  const revenueSeries = [{ label: "Won (USD)", values: months.map(m => Math.round(byMonth[m]?.value_usd ?? 0)) }];
+  const outreachBars = people.map(p => ({ label: p.name, value: p.activities_week, color: p.activities_week >= d.daily_min * 5 ? "var(--ok)" : "var(--accent)" })).sort((a, b) => b.value - a.value);
+
   return (
     <div>
       <div className="row between"><h1>Team overview</h1><span className="small muted">{fmtDate(d.today)}{q.data.stale && " · showing saved copy"}</span></div>
       <Err e={err} />
+
+      <div className="kpi-strip">
+        <div className="kpi"><div className="v">{usd(openValue)}</div><div className="l">Open pipeline value</div><div className="sub">Proposal sent + Negotiation</div></div>
+        <div className="kpi ok"><div className="v">{usd(wonMonth.value)}</div><div className="l">Won this month</div><div className="sub">{wonMonth.deals} deal{wonMonth.deals === 1 ? "" : "s"}</div></div>
+        <div className="kpi"><div className="v">{usd(receivedMonth)}</div><div className="l">Received this month</div><div className="sub">Client payments recorded</div></div>
+        <div className="kpi"><div className="v">{meetingsMonth}</div><div className="l">Meetings booked this month</div><div className="sub">{people.reduce((s, p) => s + p.meetings_held_month, 0)} held</div></div>
+        <div className="kpi"><div className="v">{outreachWeek}</div><div className="l">Outreach this week</div><div className="sub">{people.reduce((s, p) => s + p.activities_today, 0)} today across the team</div></div>
+        <div className={`kpi ${overdueCount ? "red" : "ok"}`}><div className="v">{overdueCount}</div><div className="l">Overdue items</div><div className="sub">Follow-ups, tasks, payments, delivery</div></div>
+      </div>
+
+      {totalProspects < 5 && (
+        <div className="card ok getting-started">
+          <h2>Getting started</h2>
+          <p className="small muted">The CRM is nearly empty. Five steps to get the team running on it:</p>
+          <ol>
+            <li><Link to="/admin">Add every agent in Admin → Users</Link> with their commission model and rate.</li>
+            <li><Link to="/admin?tab=import">Import your outreach sheets</Link>; duplicates are flagged and leads land in the Unassigned pool for you to assign.</li>
+            <li>Ask each agent to add their existing prospects, and the deals they have already closed, from the + button on their Pipeline.</li>
+            <li><Link to="/targets">Set weekly and monthly targets</Link> so the Today view and the leaderboards mean something from day one.</li>
+            <li>Record client payments on each deal as they arrive, so commission moves to Payable.</li>
+          </ol>
+        </div>
+      )}
+
+      <div className="charts-row">
+        <div className="card"><h3>Funnel, all time</h3><Funnel stages={funnelStages} /></div>
+        <div className="card"><h3>Revenue won by month</h3><ColumnChart series={revenueSeries} categories={months.map(monthLabel)} format={n => usd(n)} /></div>
+        <div className="card"><h3>Outreach this week per agent</h3>{outreachBars.length ? <BarChart data={outreachBars} /> : <Empty text="No agents yet" />}<div className="small muted">Green = on pace for {d.daily_min} a day.</div></div>
+      </div>
 
       <div className="grid tight">
         <Stat v={d.approvals.length} l="Approvals waiting" tone={d.approvals.length ? "warn" : undefined} />

@@ -6,7 +6,7 @@ import { bad, conflict, forbidden, notFound } from "../errors.js";
 import { audit, logActivity, notify } from "../log.js";
 import { toUsd } from "../fx.js";
 import { addDays, pkDate } from "../time.js";
-import { createPendingEntries, recomputeProfitSplit, isRetainerType } from "../commission.js";
+import { createPendingEntries, recomputeProfitSplit, isRetainerType, onPaymentRecorded } from "../commission.js";
 import { scheduleWithStatus } from "./schedule.js";
 import { randomBytes } from "node:crypto";
 
@@ -216,6 +216,60 @@ prospectsRouter.patch("/:id", (req, res) => {
   }
   if (body.estimated_cost_usd !== undefined || body.actual_cost_usd !== undefined) recomputeProfitSplit(p.id);
   res.json({ ok: true });
+});
+
+/* ---- Backfill: add a deal that was already closed before the CRM existed ---- */
+const backfillBody = prospectBody.extend({
+  deal_value: z.number().positive(), deal_currency: z.string().default("USD"), engagement_model: z.enum(ENGAGEMENTS),
+  payment_terms: z.string().min(1), closed_on: z.string(),
+  outcome: z.enum(["won", "lost"]).default("won"), lost_reason: z.enum(LOST_REASONS).optional(),
+  after_close: z.enum(["in_delivery", "project_delivered", "active_retainer", "retainer_finished"]).optional(),
+  delivered_on: z.string().optional().nullable(),
+  payments: z.array(z.object({ amount: z.number().positive(), currency: z.string().default("USD"), received_at: z.string(), label: z.string().optional() })).optional(),
+});
+prospectsRouter.post("/backfill", (req, res) => {
+  const body = backfillBody.parse(req.body);
+  const email = body.email ? body.email.trim().toLowerCase() : null;
+  const dups = findDuplicates({ email, phone: body.phone, website: body.website });
+  if (dups.length) throw conflict("A prospect with this email, phone or website already exists", { duplicate: dups[0], can_request_partner: dups[0].owner_id !== req.user.id });
+  const mgmt = isManagement(req.user);
+  const ownerId = mgmt && body.owner_id !== undefined ? body.owner_id : req.user.id;
+  const partnerId = body.partner_id && body.partner_id !== ownerId ? body.partner_id : null;
+  const cur = body.deal_currency.toUpperCase();
+  const c = toUsd(body.deal_value, cur, body.closed_on.slice(0, 10));
+  const won = body.outcome === "won";
+  if (!won && !body.lost_reason) throw bad("Pick a lost reason");
+  const retainer = isRetainerType(body.engagement_model);
+  const after = won ? (body.after_close ?? (retainer ? "active_retainer" : "in_delivery")) : null;
+  const closedIso = body.closed_on.length === 10 ? body.closed_on + "T12:00:00.000Z" : body.closed_on;
+  const tx = db.transaction(() => {
+    const r = db.prepare(`INSERT INTO prospects (company, contact_name, email, phone, phone_norm, website, domain, country, source, service_interest, campaign_tag, owner_id, partner_id, partner_since, stage,
+        contacted_at, deal_value, deal_currency, deal_value_usd, fx_rate_used, fx_fallback, engagement_model, payment_terms, proposal_sent_at, closed_won_requested_at, closed_won_at, approved_by, lost_reason, closed_lost_at, after_close_status, delivered_at, retainer_finished_at, created_by, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(body.company, body.contact_name, email, body.phone ?? null, normalisePhone(body.phone), body.website ?? null, normaliseDomain(body.website, email), body.country ?? null, body.source, body.service_interest, body.campaign_tag ?? null,
+        ownerId, partnerId, partnerId ? closedIso : null, won ? "closed_won" : "closed_lost",
+        closedIso, body.deal_value, cur, c.amount_usd, c.rate, c.fallback ? 1 : 0, body.engagement_model, body.payment_terms, closedIso,
+        won ? closedIso : null, won && mgmt ? closedIso : null, won && mgmt ? req.user.id : null, won ? null : body.lost_reason, won ? null : closedIso,
+        won && mgmt ? after : null, after === "project_delivered" ? (body.delivered_on ?? body.closed_on) : null, after === "retainer_finished" ? (body.delivered_on ?? body.closed_on) : null,
+        req.user.id, req.user.id);
+    const id = Number(r.lastInsertRowid);
+    logActivity({ prospectId: id, userId: req.user.id, type: "created", detail: `Backfilled: closed ${body.outcome} on ${body.closed_on}`, occurredAt: closedIso });
+    if (body.notes) db.prepare("INSERT INTO notes (prospect_id, user_id, body) VALUES (?, ?, ?)").run(id, req.user.id, body.notes);
+    if (won && mgmt) {
+      createPendingEntries(id);
+      for (const [i, pay] of (body.payments ?? []).entries()) {
+        const pc = toUsd(pay.amount, pay.currency, pay.received_at.slice(0, 10));
+        const pr = db.prepare("INSERT INTO payments (prospect_id, sequence, label, amount, currency, amount_usd, fx_rate_used, fx_fallback, received_at, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(id, i + 1, pay.label ?? `Payment ${i + 1}`, pay.amount, pay.currency.toUpperCase(), pc.amount_usd, pc.rate, pc.fallback ? 1 : 0, pay.received_at, req.user.id);
+        onPaymentRecorded(Number(pr.lastInsertRowid));
+      }
+    } else if (won) {
+      // agent-entered: waits for approval like any other Closed won; payments are recorded by Abdul or Adnan after approval
+      for (const m of db.prepare("SELECT id FROM users WHERE role IN ('owner','manager') AND active = 1").all() as any[]) notify(m.id, "approval_needed", `Backfilled deal needs approval: ${body.company}`, `${req.user.name} added a deal closed on ${body.closed_on} ($${c.amount_usd}).`, id);
+    }
+    res.status(201).json({ id, pending_approval: won && !mgmt });
+  });
+  tx();
 });
 
 /* ---- Stage changes ---- */
