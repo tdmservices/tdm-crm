@@ -5,6 +5,8 @@ import { requireRole, hashPassword } from "../auth.js";
 import { audit } from "../log.js";
 import { notFound, bad } from "../errors.js";
 import { refreshRates, rateFor, SUPPORTED } from "../fx.js";
+import { sendEmail } from "../channels.js";
+import { randomBytes } from "node:crypto";
 
 export const usersRouter = Router();
 
@@ -25,7 +27,26 @@ usersRouter.post("/", requireRole("owner"), (req, res) => {
   const r = db.prepare("INSERT INTO users (name, email, password_hash, role, commission_model, commission_rate) VALUES (?, ?, ?, ?, ?, ?)")
     .run(body.name, body.email, hashPassword(body.password), body.role, body.commission_model, body.commission_rate);
   audit(req.user.id, "user", Number(r.lastInsertRowid), "create", { ...body, password: undefined });
+  void accessEmail(body.name, body.email, body.password).then(sent => { if (!sent) console.log("access email not sent (SMTP not configured)"); });
   res.status(201).json({ id: r.lastInsertRowid });
+});
+
+function accessEmail(name: string, email: string, password: string) {
+  const url = getSetting("app_url") || "https://tdmcrm.duckdns.org";
+  const agency = getSetting("agency_name") || "TDM";
+  const text = `Hi ${name},\n\nYour ${agency} CRM access is ready.\n\nWeb: ${url}\nEmail: ${email}\nPassword: ${password}\n\nSign in, open your profile and change the password first. Then add every prospect you are working on and every deal you have already closed. If it is not in the CRM, it did not happen.\n\nThe team guide: ask Abdul for the link.`;
+  return sendEmail(email, `Your ${agency} CRM login`, text);
+}
+
+/** Owner: generate a fresh temporary password and email it (also returned so it can be shared on WhatsApp if email is off). */
+usersRouter.post("/:id/send-access", requireRole("owner"), async (req, res) => {
+  const u = db.prepare("SELECT id, name, email FROM users WHERE id = ? AND active = 1").get(Number(req.params.id)) as any;
+  if (!u) throw notFound();
+  const temp = randomBytes(6).toString("base64url").replace(/[-_]/g, "x") + "!";
+  db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").run(hashPassword(temp), u.id);
+  const sent = await accessEmail(u.name, u.email, temp);
+  audit(req.user.id, "user", u.id, "send_access", { emailed: sent });
+  res.json({ emailed: sent, temp_password: temp, url: getSetting("app_url") });
 });
 
 usersRouter.patch("/:id", requireRole("owner"), (req, res) => {

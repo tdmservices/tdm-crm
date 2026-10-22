@@ -369,7 +369,8 @@ const defaultSettings: Record<string, string> = {
   overdue_alert_days: "2",
   proposal_chase_days: "5",
   agency_name: "TDM",
-  agency_logo_url: "",
+  agency_logo_url: "/brand/tdm-logo.png",
+  app_url: "https://tdmcrm.duckdns.org",
   display_currency: "PKR",
   // Phase 3 integrations (filled in by the Owner in Admin → Integrations)
   smtp_host: "", smtp_port: "587", smtp_user: "", smtp_pass: "", smtp_from: "",
@@ -394,3 +395,5 @@ export function getSetting(key: string): string | undefined {
 export function setSetting(key: string, value: string) {
   db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
+if (!getSetting("agency_logo_url")) setSetting("agency_logo_url", "/brand/tdm-logo.png");
+if (!getSetting("app_url")) setSetting("app_url", "https://tdmcrm.duckdns.org");

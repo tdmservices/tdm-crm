@@ -72,8 +72,9 @@ function Login({ onLogin }: { onLogin: (u: User, min?: string, url?: string) => 
   }
   return (
     <form className="login card" onSubmit={submit}>
-      <h1>TDM CRM</h1>
-      <p className="muted small">If it is not in the CRM, it did not happen.</p>
+      <div className="login-logo"><img className="brand-img lg" src="/brand/tdm-logo.png" alt="The Digital Marketing Services" style={{ margin: 0 }} /></div>
+      <h1 style={{ textAlign: "center" }}>Sales CRM</h1>
+      <p className="muted small" style={{ textAlign: "center" }}>If it is not in the CRM, it did not happen.</p>
       <label className="f"><span>Email</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" required /></label>
       <label className="f"><span>Password</span><input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></label>
       <Err e={err} />
@@ -97,12 +98,12 @@ function Shell({ user, online, pending, onLogout }: { user: User; online: boolea
   return (
     <div className="shell">
       <nav className="sidebar">
-        <div className="brand">{brand}</div>
+        <div className="brand"><img className="brand-img" src="/brand/tdm-mark.png" alt={brand} /></div>
         {tabs.map(([p, l]) => <Link key={p} to={p} className={active(p)}>{l}</Link>)}
         <div className="who"><Link to="/me" style={{ padding: 0, display: "inline", color: "#cbd5e1" }}>{user.name}</Link> · {user.role}<br /><a onClick={onLogout} style={{ padding: 0, display: "inline", color: "#94a3b8" }}>Sign out</a></div>
       </nav>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <header className="topbar"><span className="brand">{brand}</span><span className="who"><Link to="/me" style={{ color: "#fff" }}>{user.name}</Link> · <a onClick={onLogout} style={{ color: "#cbd5e1" }}>Sign out</a></span></header>
+        <header className="topbar"><span className="brand"><img className="brand-img" src="/brand/tdm-mark.png" alt={brand} /></span><span className="who"><Link to="/me" style={{ color: "#fff" }}>{user.name}</Link> · <a onClick={onLogout} style={{ color: "#cbd5e1" }}>Sign out</a></span></header>
         {!online && <div className="offline-bar">Offline. Entries are saved on this device and will sync when back online{pending ? ` (${pending} waiting)` : ""}.</div>}
         {online && pending > 0 && <div className="offline-bar">Syncing {pending} saved entries…</div>}
         <main className="content"><Router hash={hash} user={user} /></main>

@@ -1,6 +1,6 @@
 :root {
   --bg: #f4f6f9; --card: #ffffff; --text: #111827; --muted: #6b7280; --line: #e5e7eb;
-  --primary: #0f172a; --accent: #2563eb; --accent-soft: #dbeafe; --danger: #dc2626; --danger-soft: #fee2e2;
+  --primary: #0e3d31; --accent: #1f7a5e; --accent-soft: #d9efe6; --danger: #dc2626; --danger-soft: #fee2e2;
   --warn: #d97706; --warn-soft: #fef3c7; --ok: #16a34a; --ok-soft: #dcfce7; --radius: 12px;
 }
 * { box-sizing: border-box; }
@@ -16,6 +16,9 @@ h1 { font-size: 22px; margin: 0 0 12px; } h2 { font-size: 17px; margin: 0 0 8px;
 .tabbar { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid var(--line); display: flex; justify-content: space-around; padding: 6px 0 calc(6px + env(safe-area-inset-bottom)); z-index: 10; }
 .tabbar a { color: var(--muted); font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 8px; min-width: 56px; }
 .tabbar a.active { color: var(--accent); font-weight: 600; }
+.brand-img { height: 26px; width: auto; display: block; }
+.brand-img.lg { height: 56px; margin: 0 auto 10px; }
+.login-logo { background: #fff8e6; border-radius: 12px; padding: 14px; margin-bottom: 14px; display: flex; justify-content: center; }
 .tabbar a .ico { font-size: 20px; line-height: 1; }
 @media (min-width: 900px) {
   .shell { flex-direction: row; }
@@ -74,6 +77,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .offline-bar { background: var(--warn-soft); color: #92400e; padding: 6px 12px; font-size: 13px; text-align: center; }
 .muted { color: var(--muted); } .small { font-size: 13px; } .b { font-weight: 600; }
 .progress { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; } .progress > div { height: 100%; background: var(--accent); }
+.sidebar .brand img { filter: brightness(0) invert(1); }
+.topbar .brand img { filter: brightness(0) invert(1); }
 .progress.won > div { background: var(--ok); }
 .link-row a { margin-right: 12px; font-size: 14px; }
 .fab { position: fixed; right: 16px; bottom: calc(76px + env(safe-area-inset-bottom)); width: 54px; height: 54px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 28px; border: 0; box-shadow: 0 6px 18px rgba(37,99,235,.4); z-index: 9; }

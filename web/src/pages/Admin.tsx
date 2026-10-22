@@ -24,6 +24,7 @@ export function AdminPage({ user, tab }: { user: User; tab: string }) {
 
 /* ---------------- Users ---------------- */
 function Users({ owner, meId }: { owner: boolean; meId: number }) {
+  const [access, setAccess] = useState<any>(null);
   const q = useAsync(() => get("/users"), []);
   const [editing, setEditing] = useState<any | null>(null);
   const [adding, setAdding] = useState(false);
@@ -38,11 +39,16 @@ function Users({ owner, meId }: { owner: boolean; meId: number }) {
           <tr key={u.id} style={u.active ? undefined : { opacity: .5 }}>
             <td className="b">{u.name}</td><td className="small">{u.email}</td><td>{u.role}</td>{u.role !== "agent" ? <td colSpan={2} className="small muted">Partner, no commission</td> : <><td>{label(u.commission_model)}</td><td className="num">{u.commission_rate != null ? `${Math.round(u.commission_rate * 100)}%` : "—"}</td></>}
             <td>{u.active ? "✓" : "✗"}</td><td className="small">{fmtDateTime(u.last_login_at)}</td>
-            <td className="row" style={{ flexWrap: "nowrap" }}>{owner && <button className="btn sm muted" onClick={() => setEditing(u)}>Edit</button>}{owner && u.id !== meId && <button className="btn sm danger" title="Only possible for an account with no records" onClick={async () => { if (!confirm(`Remove ${u.name}? Only works if this account has no prospects, activities or commission.`)) return; try { await api("DELETE", `/users/${u.id}`); q.reload(); } catch (e) { alert((e as Error).message); } }}>Remove</button>}</td>
+            <td className="row" style={{ flexWrap: "nowrap" }}>{owner && <button className="btn sm muted" onClick={() => setEditing(u)}>Edit</button>}{owner && u.active ? <button className="btn sm ghost" onClick={async () => { if (!confirm(`Send ${u.name} a new temporary password by email? Their current password stops working.`)) return; try { const r = await post(`/users/${u.id}/send-access`, {}); setAccess({ ...r, name: u.name, email: u.email }); } catch (e) { alert((e as Error).message); } }}>Send access</button> : null}{owner && u.id !== meId && <button className="btn sm danger" title="Only possible for an account with no records" onClick={async () => { if (!confirm(`Remove ${u.name}? Only works if this account has no prospects, activities or commission.`)) return; try { await api("DELETE", `/users/${u.id}`); q.reload(); } catch (e) { alert((e as Error).message); } }}>Remove</button>}</td>
           </tr>
         ))}</tbody>
       </table></div>
       {adding && <UserForm onClose={() => setAdding(false)} onSaved={() => { setAdding(false); q.reload(); }} />}
+      {access && <Modal title={`Access for ${access.name}`} onClose={() => setAccess(null)}>
+        <div className={access.emailed ? "info" : "err"}>{access.emailed ? `Emailed to ${access.email}.` : "Email is not set up yet (Admin → Integrations → SMTP), so share these details yourself, for example on WhatsApp."}</div>
+        <table><tbody><tr><td className="muted">Web</td><td>{access.url}</td></tr><tr><td className="muted">Email</td><td>{access.email}</td></tr><tr><td className="muted">Temporary password</td><td className="b">{access.temp_password}</td></tr></tbody></table>
+        <button className="btn" style={{ marginTop: 10 }} onClick={() => { navigator.clipboard?.writeText(`${access.url}\nEmail: ${access.email}\nPassword: ${access.temp_password}\nChange it after signing in.`); }}>Copy for WhatsApp</button>
+      </Modal>}
       {editing && <UserForm user={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); q.reload(); }} />}
     </div>
   );
