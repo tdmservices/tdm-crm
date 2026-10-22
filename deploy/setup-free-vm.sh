@@ -23,6 +23,8 @@ if [ ! -f .env ]; then
   echo "JWT_SECRET=$(openssl rand -hex 32)" > .env
   echo "DOMAIN=$DOMAIN" >> .env
 fi
+echo "== Enabling auto-update from GitHub (every 5 minutes)"
+bash "$DIR/deploy/enable-auto-update.sh"
 echo "== Building and starting (first build takes a few minutes)"
 sudo docker compose up -d --build
 echo

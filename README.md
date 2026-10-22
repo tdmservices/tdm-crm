@@ -91,7 +91,7 @@ A CRM needs a server that keeps its database between restarts. Free tiers at Ren
    curl -fsSL https://raw.githubusercontent.com/tdmservices/tdm-crm/main/deploy/setup-free-vm.sh | DOMAIN=tdmcrm.duckdns.org bash
    ```
    That installs Docker, builds the app, and starts it behind Caddy with a free HTTPS certificate. The CRM is at `https://tdmcrm.duckdns.org` a minute later. Data lives in a Docker volume on the VM.
-5. Updates: `cd ~/tdm-crm && git pull && sudo docker compose up -d --build`.
+5. Updates are automatic: the VM checks GitHub every 5 minutes and rebuilds when `main` changes (`deploy/auto-update.sh`, enabled by the setup script). On a VM set up before this existed, run once: `bash ~/tdm-crm/deploy/enable-auto-update.sh`.
 
 Backups: the whole database is one file. `sudo docker cp $(sudo docker compose ps -q app):/data/tdm.db ~/tdm-backup.db` copies it out; a weekly cron doing that into Google Drive or a second machine is enough.
 
