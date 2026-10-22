@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import React, { useEffect, useState, type ReactNode } from "react";
 
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   useEffect(() => { const h = (e: KeyboardEvent) => e.key === "Escape" && onClose(); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, [onClose]);
@@ -47,4 +47,4 @@ export function useHash() {
   return hash;
 }
 export function nav(path: string) { window.location.hash = path; }
-export function Link({ to, children, className }: { to: string; children: ReactNode; className?: string }) { return <a href={`#${to}`} className={className}>{children}</a>; }
+export function Link({ to, children, className, style }: { to: string; children: ReactNode; className?: string; style?: React.CSSProperties }) { return <a href={`#${to}`} className={className} style={style}>{children}</a>; }

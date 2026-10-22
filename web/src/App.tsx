@@ -12,8 +12,18 @@ import { TeamPage } from "./pages/Team";
 import { ReportsPage } from "./pages/Reports";
 import { AdminPage } from "./pages/Admin";
 import { PayoutsPage } from "./pages/Payouts";
+import { DocumentPage } from "./pages/Documents";
+import { PortalPage } from "./pages/Portal";
+import { ProfilePage } from "./pages/Profile";
 
 export function App() {
+  const hash = useHash();
+  const portal = hash.match(/^\/portal\/([A-Za-z0-9_-]+)(?:\/documents\/(\d+))?/);
+  if (portal) return <PortalPage token={portal[1]} documentId={portal[2] ? Number(portal[2]) : null} />;
+  return <AuthedApp />;
+}
+
+function AuthedApp() {
   const [user, setUser] = useState<User | null>(null);
   const [booting, setBooting] = useState(!!getToken());
   const [gate, setGate] = useState<{ min: string; url: string } | null>(null);
@@ -74,6 +84,10 @@ function Login({ onLogin }: { onLogin: (u: User, min?: string, url?: string) => 
 
 function Shell({ user, online, pending, onLogout }: { user: User; online: boolean; pending: number; onLogout: () => void }) {
   const hash = useHash();
+  const [brand, setBrand] = useState(() => { try { return localStorage.getItem("tdm_brand") || "TDM CRM"; } catch { return "TDM CRM"; } });
+  useEffect(() => { get("/settings/branding").then(b => { const n = b.agency_name ? `${b.agency_name} CRM` : "TDM CRM"; setBrand(n); document.title = n; try { localStorage.setItem("tdm_brand", n); } catch { /* ignore */ } }).catch(() => {}); }, []);
+  const docMatch = hash.match(/^\/documents\/(\d+)/);
+  if (docMatch) return <DocumentPage id={Number(docMatch[1])} user={user} />;
   const mgmt = user.role !== "agent";
   const tabs = mgmt
     ? [["/", "Team", "▣"], ["/pipeline", "Pipeline", "☰"], ["/tasks", "Tasks", "✓"], ["/payouts", "Payouts", "$"], ["/reports", "Reports", "▤"], ["/leaderboard", "Board", "★"], ["/targets", "Targets", "◎"], ["/admin", "Admin", "⚙"]]
@@ -83,12 +97,12 @@ function Shell({ user, online, pending, onLogout }: { user: User; online: boolea
   return (
     <div className="shell">
       <nav className="sidebar">
-        <div className="brand">TDM CRM</div>
+        <div className="brand">{brand}</div>
         {tabs.map(([p, l]) => <Link key={p} to={p} className={active(p)}>{l}</Link>)}
-        <div className="who">{user.name} · {user.role}<br /><a onClick={onLogout} style={{ padding: 0, display: "inline", color: "#94a3b8" }}>Sign out</a></div>
+        <div className="who"><Link to="/me" style={{ padding: 0, display: "inline", color: "#cbd5e1" }}>{user.name}</Link> · {user.role}<br /><a onClick={onLogout} style={{ padding: 0, display: "inline", color: "#94a3b8" }}>Sign out</a></div>
       </nav>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <header className="topbar"><span className="brand">TDM CRM</span><span className="who">{user.name} · <a onClick={onLogout} style={{ color: "#cbd5e1" }}>Sign out</a></span></header>
+        <header className="topbar"><span className="brand">{brand}</span><span className="who"><Link to="/me" style={{ color: "#fff" }}>{user.name}</Link> · <a onClick={onLogout} style={{ color: "#cbd5e1" }}>Sign out</a></span></header>
         {!online && <div className="offline-bar">Offline. Entries are saved on this device and will sync when back online{pending ? ` (${pending} waiting)` : ""}.</div>}
         {online && pending > 0 && <div className="offline-bar">Syncing {pending} saved entries…</div>}
         <main className="content"><Router hash={hash} user={user} /></main>
@@ -115,6 +129,7 @@ function Router({ hash, user }: { hash: string; user: User }) {
     case "/targets": return <TargetsPage user={user} />;
     case "/reports": return mgmt ? <ReportsPage user={user} /> : <TodayPage user={user} />;
     case "/admin": return mgmt ? <AdminPage user={user} tab={q.get("tab") ?? "users"} /> : <TodayPage user={user} />;
+    case "/me": return <ProfilePage user={user} />;
     default: return <div className="center">Page not found. <Link to="/">Go home</Link></div>;
   }
 }

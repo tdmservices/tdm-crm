@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { get, post, patch, offlineWrite, usd, usd2, label, fmtDate, fmtDateTime, todayPk, addDays, type User } from "../lib/api";
+import { get, post, patch, api, offlineWrite, usd, usd2, label, fmtDate, fmtDateTime, todayPk, addDays, type User } from "../lib/api";
+const put = <T = any,>(p: string, b?: unknown) => api<T>("PUT", p, b);
 import { Modal, Field, Select, Err, Stage, useAsync, Link, nav } from "../lib/ui";
 import { LogActionModal, TaskDoneModal } from "./Today";
 import { NewTaskModal } from "./Tasks";
@@ -15,14 +16,25 @@ export function ProspectPage({ id, user }: { id: number; user: User }) {
   const [modal, setModal] = useState<string | null>(null);
   const [taskModal, setTaskModal] = useState<{ task: any; mode: "done" | "blocked" } | null>(null);
   const [err, setErr] = useState<unknown>(null);
+  const [payLine, setPayLine] = useState<any>(null);
+  const [portalLink, setPortalLink] = useState<string | null>(null);
   if (d.loading && !d.data) return <div className="center">Loading…</div>;
   if (d.error && !d.data) return <Err e={d.error} />;
-  const { prospect: p, notes, activities, follow_ups, meetings, tasks, payments, commission, partner_requests } = d.data;
+  const { prospect: p, notes, activities, follow_ups, meetings, tasks, payments, commission, partner_requests, schedule = [], documents = [] } = d.data;
   const isOwner = p.owner_id === user.id;
   const closed = ["closed_won", "closed_lost"].includes(p.stage);
   const digits = (p.phone ?? "").replace(/\D/g, "");
   async function tap(type: string) { try { await offlineWrite("POST", `/prospects/${id}/activities`, { type, clear_due: false }); d.reload(); } catch (e) { setErr(e); } }
   async function act(fn: () => Promise<unknown>) { setErr(null); try { await fn(); d.reload(); } catch (e) { setErr(e); } }
+  async function portal(rotate: boolean) {
+    setErr(null);
+    try {
+      const r = await post(`/prospects/${id}/portal-link`, { rotate });
+      const link = `${location.origin}${location.pathname}#${r.path}`;
+      setPortalLink(link);
+      try { await navigator.clipboard.writeText(link); } catch { /* shown in the input instead */ }
+    } catch (e) { setErr(e); }
+  }
   const openFollowUps = follow_ups.filter((f: any) => !f.done_at);
   const pendingReqs = partner_requests.filter((r: any) => r.status === "pending");
   const agents = (users.data ?? []).filter((u: any) => u.active !== 0);
@@ -78,6 +90,12 @@ export function ProspectPage({ id, user }: { id: number; user: User }) {
             {p.after_close_status === "in_delivery" && <button className="btn sm" onClick={() => setModal("delivered")}>Mark delivered</button>}
             {p.after_close_status === "active_retainer" && <button className="btn sm" onClick={() => setModal("finished")}>Mark retainer finished</button>}
           </div>
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn sm ghost" onClick={() => portal(false)}>Copy client link</button>
+            <button className="btn sm muted" onClick={() => portal(true)}>New link</button>
+            {portalLink && <input readOnly value={portalLink} onFocus={e => e.currentTarget.select()} style={{ flex: 1, minWidth: 200 }} />}
+          </div>
+          <div className="small muted" style={{ marginTop: 4 }}>The client sees the payment schedule, received payments and sent invoices. No login.</div>
         </div>
       )}
 
@@ -126,9 +144,35 @@ export function ProspectPage({ id, user }: { id: number; user: User }) {
           {p.closed_won_at && (
             <div className="card">
               <div className="row between"><h3>Payments</h3>{mgmt && p.after_close_status !== "retainer_finished" && <button className="btn sm" onClick={() => setModal("payment")}>Record payment</button>}</div>
-              {payments.length === 0 ? <div className="muted">No payment recorded yet. Commission stays Pending until the client pays.</div> : <ul className="list">{payments.map((pay: any) => <li key={pay.id}><div className="main"><div className="title">{pay.label ?? `Payment ${pay.sequence}`} · {usd2(pay.amount_usd)}{pay.currency !== "USD" ? <span className="muted small"> ({pay.amount} {pay.currency})</span> : null} {pay.reversed_at && <span className="chip red">Reversed</span>}{pay.fx_fallback ? <span className="chip warn" title="Rate service unavailable that day; last fetched rate used. Final.">Fallback rate</span> : null}</div><div className="sub">Received {fmtDate(pay.received_at)}{pay.note ? ` · ${pay.note}` : ""}</div></div>{mgmt && !pay.reversed_at && <button className="btn sm danger" onClick={() => setModal(`reverse:${pay.id}`)}>Reverse</button>}</li>)}</ul>}
+              {payments.length === 0 ? <div className="muted">No payment recorded yet. Commission stays Pending until the client pays.</div> : <ul className="list">{payments.map((pay: any) => <li key={pay.id}><div className="main"><div className="title">{pay.label ?? `Payment ${pay.sequence}`} · {usd2(pay.amount_usd)}{pay.currency !== "USD" ? <span className="muted small"> ({pay.amount} {pay.currency})</span> : null} {pay.reversed_at && <span className="chip red">Reversed</span>}{pay.fx_fallback ? <span className="chip warn" title="Rate service unavailable that day; last fetched rate used. Final.">Fallback rate</span> : null}</div><div className="sub">Received {fmtDate(pay.received_at)}{pay.schedule_id ? ` → ${schedule.find((l: any) => l.id === pay.schedule_id)?.name ?? "scheduled line"}` : ""}{pay.note ? ` · ${pay.note}` : ""}</div></div>{mgmt && !pay.reversed_at && <button className="btn sm danger" onClick={() => setModal(`reverse:${pay.id}`)}>Reverse</button>}</li>)}</ul>}
             </div>
           )}
+          {p.deal_value != null && (
+            <div className="card">
+              <div className="row between"><h3>Payment schedule</h3>{(mgmt || (isOwner && !p.closed_won_at)) && <button className="btn sm" onClick={() => setModal("schedule")}>{schedule.length ? "Change schedule" : "Set schedule"}</button>}</div>
+              {schedule.length === 0 ? <div className="muted">No schedule yet.{p.payment_terms ? ` Terms: ${p.payment_terms}` : ""}</div> : (
+                <ul className="list">{schedule.map((l: any) => (
+                  <li key={l.id}>
+                    <div className="main">
+                      <div className="title">{l.name} · {l.amount.toLocaleString()} {l.currency} <span className="muted small">({usd2(l.amount_usd)})</span> <span className={`chip ${l.status === "received" ? "ok" : l.status === "overdue" ? "red" : "grey"}`}>{label(l.status)}</span></div>
+                      <div className="sub">{l.status === "received" ? `Received ${fmtDate(l.received_at)}` : `Expected ${fmtDate(l.expected_date)}`}{l.percentage != null ? ` · ${Math.round(l.percentage)}%` : ""}</div>
+                    </div>
+                    {mgmt && l.status !== "received" && p.closed_won_at && (
+                      <div className="row" style={{ flexWrap: "nowrap" }}>
+                        <button className="btn sm ok" onClick={() => { setPayLine(l); setModal("payment"); }}>Record payment</button>
+                        <button className="btn sm muted" onClick={() => act(async () => { const r = await post(`/documents/from-schedule/${l.id}`, {}); nav(`/documents/${r.id}`); })}>Invoice</button>
+                      </div>
+                    )}
+                  </li>
+                ))}</ul>
+              )}
+              <div className="small muted" style={{ marginTop: 6 }}>Every expected payment shows here. Commission moves to Payable when Abdul records the payment.</div>
+            </div>
+          )}
+          <div className="card">
+            <div className="row between"><h3>Documents</h3><div className="row" style={{ flexWrap: "nowrap" }}><button className="btn sm ghost" onClick={() => setModal("doc:proposal")}>New proposal</button>{mgmt && <button className="btn sm ghost" onClick={() => setModal("doc:invoice")}>New invoice</button>}</div></div>
+            {documents.length === 0 ? <div className="muted">No proposals or invoices yet.</div> : <ul className="list">{documents.map((doc: any) => <li key={doc.id} style={{ cursor: "pointer" }} onClick={() => nav(`/documents/${doc.id}`)}><div className="main"><div className="title"><span className="chip">{label(doc.type)}</span> {doc.number} · {doc.title}</div><div className="sub">{doc.total.toLocaleString()} {doc.currency} · issued {fmtDate(doc.issued_at)}{doc.due_date ? ` · due ${fmtDate(doc.due_date)}` : ""} <span className={`chip ${doc.status === "paid" || doc.status === "accepted" ? "ok" : doc.status === "void" ? "red" : "grey"}`}>{label(doc.status)}</span></div></div></li>)}</ul>}
+          </div>
           {commission.length > 0 && (
             <div className="card">
               <h3>Commission</h3>
@@ -154,7 +198,9 @@ export function ProspectPage({ id, user }: { id: number; user: User }) {
       {modal?.startsWith("reverse:") && <TextModal title="Reverse payment (clawback)" label="Reason" hint="Commission already paid on it is deducted from the next payout." onClose={() => setModal(null)} onSave={async v => { await post(`/payments/${modal.split(":")[1]}/reverse`, { reason: v }); d.reload(); }} danger />}
       {(modal === "delivered" || modal === "finished") && <DateModal title={modal === "delivered" ? "Mark project delivered" : "Mark retainer finished"} onClose={() => setModal(null)} onSave={async v => { await post(`/prospects/${id}/after-close`, { status: modal === "delivered" ? "project_delivered" : "retainer_finished", date: v }); d.reload(); }} />}
       {modal === "meeting" && <MeetingModal prospectId={id} meetings={meetings} onClose={() => setModal(null)} onDone={d.reload} />}
-      {modal === "payment" && <PaymentModal p={p} onClose={() => setModal(null)} onDone={d.reload} />}
+      {modal === "payment" && <PaymentModal p={p} line={payLine} onClose={() => { setModal(null); setPayLine(null); }} onDone={d.reload} />}
+      {modal === "schedule" && <ScheduleModal p={p} onClose={() => setModal(null)} onDone={d.reload} />}
+      {modal?.startsWith("doc:") && <DocumentModal p={p} type={modal.split(":")[1] as "proposal" | "invoice"} onClose={() => setModal(null)} onDone={d.reload} />}
       {modal === "task" && <NewTaskModal users={agents} prospectId={id} onClose={() => setModal(null)} onDone={d.reload} />}
       {modal === "assign" && <PickUserModal title="Reassign owner" users={agents.filter((u: any) => u.id !== p.owner_id)} onClose={() => setModal(null)} onPick={async uid => { await post(`/prospects/${id}/assign`, { owner_id: uid }); d.reload(); }} />}
       {modal === "partner" && <PickUserModal title="Partner on this deal" hint="Applies to payments received from now. Removing clears the partner." users={agents.filter((u: any) => u.id !== p.owner_id)} allowNone onClose={() => setModal(null)} onPick={async uid => { await post(`/prospects/${id}/partner`, { partner_id: uid }); d.reload(); }} />}
@@ -290,19 +336,20 @@ export function MeetingModal({ prospectId, meetings, onClose, onDone }: { prospe
     </Modal>
   );
 }
-function PaymentModal({ p, onClose, onDone }: { p: any; onClose: () => void; onDone: () => void }) {
+function PaymentModal({ p, line, onClose, onDone }: { p: any; line?: any; onClose: () => void; onDone: () => void }) {
   const retainer = ["monthly_retainer", "dedicated_resource"].includes(p.engagement_model);
-  const [f, setF] = useState<any>({ amount: "", currency: p.deal_currency ?? "USD", received_at: todayPk(), label: "", note: "" });
+  const [f, setF] = useState<any>({ amount: line ? String(line.amount) : "", currency: line?.currency ?? p.deal_currency ?? "USD", received_at: todayPk(), label: line?.name ?? "", note: "" });
   const set = (k: string, v: string) => setF((s: any) => ({ ...s, [k]: v }));
   const [err, setErr] = useState<unknown>(null); const [busy, setBusy] = useState(false); const [res, setRes] = useState<any>(null);
   async function save() {
     setBusy(true); setErr(null);
-    try { const r = await post("/payments", { prospect_id: p.id, amount: Number(f.amount), currency: f.currency, received_at: f.received_at, label: f.label || undefined, note: f.note || undefined }); setRes(r); onDone(); }
+    try { const r = await post("/payments", { prospect_id: p.id, amount: Number(f.amount), currency: f.currency, received_at: f.received_at, label: f.label || undefined, note: f.note || undefined, schedule_id: line?.id ?? null }); setRes(r); onDone(); }
     catch (e) { setErr(e); } finally { setBusy(false); }
   }
   if (res) return <Modal title="Payment recorded" onClose={onClose}><div className="info">{usd2(res.amount_usd)} recorded{res.fx_fallback ? " using the last fetched rate (rate service unavailable). This is final." : ""}. Commission moved to Payable and the agent was notified.</div><button className="btn" onClick={onClose}>Done</button></Modal>;
   return (
     <Modal title="Record client payment" onClose={onClose}>
+      {line && <div className="info">Against scheduled line <b>{line.name}</b> expected {fmtDate(line.expected_date)}.</div>}
       <div className="form-grid">
         <Field label="Amount *"><input type="number" min="0" step="0.01" value={f.amount} onChange={e => set("amount", e.target.value)} autoFocus /></Field>
         <Field label="Currency *" hint="Converted to USD at the rate for the received date"><Select value={f.currency} onChange={v => set("currency", v)} options={CURRENCIES} /></Field>
@@ -316,4 +363,112 @@ function PaymentModal({ p, onClose, onDone }: { p: any; onClose: () => void; onD
     </Modal>
   );
 }
-void nav; void Link;
+
+function ScheduleModal({ p, onClose, onDone }: { p: any; onClose: () => void; onDone: () => void }) {
+  const retainer = ["monthly_retainer", "dedicated_resource"].includes(p.engagement_model);
+  const cur = p.deal_currency ?? "USD";
+  const [structure, setStructure] = useState<string>(p.payment_structure ?? (retainer ? "monthly" : "milestones"));
+  const [upfrontDate, setUpfrontDate] = useState(addDays(todayPk(), 7));
+  const [rows, setRows] = useState<{ name: string; percentage: string; amount: string; expected_date: string }[]>([
+    { name: "Upfront", percentage: "50", amount: "", expected_date: todayPk() }, { name: "Final delivery", percentage: "50", amount: "", expected_date: addDays(todayPk(), 30) },
+  ]);
+  const [ret, setRet] = useState<any>({ monthly_amount: p.retainer_monthly_amount ?? p.deal_value ?? "", billing_day: p.retainer_billing_day ?? 1, start_month: p.retainer_start_month ?? todayPk().slice(0, 7), min_months: p.retainer_min_months ?? "" });
+  const [err, setErr] = useState<unknown>(null); const [busy, setBusy] = useState(false);
+  const setRow = (i: number, k: string, v: string) => setRows(r => r.map((x, j) => j === i ? { ...x, [k]: v } : x));
+  const lineAmount = (r: typeof rows[0]) => r.amount !== "" && Number(r.amount) > 0 ? Number(r.amount) : Math.round(Number(p.deal_value) * (Number(r.percentage) || 0)) / 100;
+  const total = Math.round(rows.reduce((s, r) => s + lineAmount(r), 0) * 100) / 100;
+  const mismatch = Math.abs(total - Number(p.deal_value)) > 0.5;
+  const preset = (pcts: number[], names: string[]) => setRows(pcts.map((pc, i) => ({ name: names[i], percentage: String(pc), amount: "", expected_date: addDays(todayPk(), i * 30) })));
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      const body: any = { structure };
+      if (structure === "full_upfront") body.expected_date = upfrontDate;
+      if (structure === "milestones") body.milestones = rows.map(r => ({ name: r.name, percentage: r.amount ? null : Number(r.percentage), amount: r.amount ? Number(r.amount) : null, expected_date: r.expected_date }));
+      if (structure === "monthly") body.retainer = { monthly_amount: Number(ret.monthly_amount), billing_day: Number(ret.billing_day), start_month: ret.start_month, min_months: ret.min_months === "" ? null : Number(ret.min_months) };
+      await put(`/prospects/${p.id}/schedule`, body); onDone(); onClose();
+    } catch (e) { setErr(e); } finally { setBusy(false); }
+  }
+  return (
+    <Modal title="Payment schedule" onClose={onClose}>
+      <div className="small muted" style={{ marginBottom: 8 }}>Deal value {Number(p.deal_value).toLocaleString()} {cur} · {label(p.engagement_model)}</div>
+      <Field label="Structure">
+        <Select value={structure} onChange={setStructure} options={retainer ? [{ value: "monthly", label: "Monthly (retainer)" }] : [{ value: "full_upfront", label: "Full upfront" }, { value: "milestones", label: "Split into milestones" }]} />
+      </Field>
+      {structure === "full_upfront" && <Field label="Expected date"><input type="date" value={upfrontDate} onChange={e => setUpfrontDate(e.target.value)} /></Field>}
+      {structure === "milestones" && (
+        <>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <button className="btn sm muted" onClick={() => preset([50, 50], ["Upfront", "Final delivery"])}>50 / 50</button>
+            <button className="btn sm muted" onClick={() => preset([30, 40, 30], ["Upfront", "Design approved", "Final delivery"])}>30 / 40 / 30</button>
+            <button className="btn sm ghost" onClick={() => setRows(r => [...r, { name: "", percentage: "", amount: "", expected_date: addDays(todayPk(), 30) }])}>+ Milestone</button>
+          </div>
+          {rows.map((r, i) => (
+            <div key={i} className="card" style={{ padding: 10 }}>
+              <div className="form-grid">
+                <Field label="Name"><input value={r.name} onChange={e => setRow(i, "name", e.target.value)} /></Field>
+                <Field label="Percent"><input type="number" min="0" max="100" value={r.percentage} onChange={e => setRow(i, "percentage", e.target.value)} disabled={r.amount !== ""} /></Field>
+                <Field label={`Or amount (${cur})`}><input type="number" min="0" step="0.01" value={r.amount} onChange={e => setRow(i, "amount", e.target.value)} /></Field>
+                <Field label="Expected date"><input type="date" value={r.expected_date} onChange={e => setRow(i, "expected_date", e.target.value)} /></Field>
+              </div>
+              <div className="row between"><span className="small muted">= {lineAmount(r).toLocaleString()} {cur}</span>{rows.length > 1 && <button className="btn sm muted" onClick={() => setRows(x => x.filter((_, j) => j !== i))}>Remove</button>}</div>
+            </div>
+          ))}
+          <div className={mismatch ? "err" : "info"}>Milestones total {total.toLocaleString()} {cur} of {Number(p.deal_value).toLocaleString()} {cur}{mismatch ? ". They must add up to the deal value." : "."}</div>
+        </>
+      )}
+      {structure === "monthly" && (
+        <div className="form-grid">
+          <Field label={`Monthly amount (${cur})`}><input type="number" min="0" step="0.01" value={ret.monthly_amount} onChange={e => setRet({ ...ret, monthly_amount: e.target.value })} /></Field>
+          <Field label="Billing day each month (1–28)"><input type="number" min="1" max="28" value={ret.billing_day} onChange={e => setRet({ ...ret, billing_day: e.target.value })} /></Field>
+          <Field label="Start month"><input type="month" value={ret.start_month} onChange={e => setRet({ ...ret, start_month: e.target.value })} /></Field>
+          <Field label="Minimum contract length (months)"><input type="number" min="0" value={ret.min_months} onChange={e => setRet({ ...ret, min_months: e.target.value })} /></Field>
+        </div>
+      )}
+      <Err e={err} />
+      <button className="btn" disabled={busy || (structure === "milestones" && (mismatch || rows.some(r => !r.name || !r.expected_date))) || (structure === "monthly" && (!ret.monthly_amount || !ret.start_month))} onClick={save}>Save schedule</button>
+    </Modal>
+  );
+}
+
+function DocumentModal({ p, type, onClose, onDone }: { p: any; type: "proposal" | "invoice"; onClose: () => void; onDone: () => void }) {
+  const [title, setTitle] = useState(type === "proposal" ? `Proposal for ${p.company}` : `Invoice for ${p.company}`);
+  const [lines, setLines] = useState<{ description: string; qty: string; unit_price: string }[]>([{ description: label(p.service_interest), qty: "1", unit_price: p.deal_value != null ? String(p.deal_value) : "" }]);
+  const [currency, setCurrency] = useState(p.deal_currency ?? "USD");
+  const [tax, setTax] = useState("0"); const [notes, setNotes] = useState(""); const [dueDays, setDueDays] = useState("14");
+  const [err, setErr] = useState<unknown>(null); const [busy, setBusy] = useState(false);
+  const setLine = (i: number, k: string, v: string) => setLines(l => l.map((x, j) => j === i ? { ...x, [k]: v } : x));
+  const subtotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.unit_price) || 0), 0);
+  const total = subtotal * (1 + (Number(tax) || 0) / 100);
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await post("/documents", { prospect_id: p.id, type, title, lines: lines.map(l => ({ description: l.description, qty: Number(l.qty) || 1, unit_price: Number(l.unit_price) || 0 })), currency, tax_rate: Number(tax) || 0, notes: notes || undefined, due_days: Number(dueDays) || 14 });
+      onDone(); onClose(); nav(`/documents/${r.id}`);
+    } catch (e) { setErr(e); } finally { setBusy(false); }
+  }
+  return (
+    <Modal title={type === "proposal" ? "New proposal" : "New invoice"} onClose={onClose}>
+      <Field label="Title"><input value={title} onChange={e => setTitle(e.target.value)} /></Field>
+      {lines.map((l, i) => (
+        <div key={i} className="row" style={{ alignItems: "flex-end", marginBottom: 6 }}>
+          <Field label="Description"><input value={l.description} onChange={e => setLine(i, "description", e.target.value)} /></Field>
+          <Field label="Qty"><input type="number" min="0" step="0.01" value={l.qty} onChange={e => setLine(i, "qty", e.target.value)} style={{ width: 80 }} /></Field>
+          <Field label="Unit price"><input type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, "unit_price", e.target.value)} style={{ width: 120 }} /></Field>
+          {lines.length > 1 && <button className="btn sm muted" style={{ marginBottom: 10 }} onClick={() => setLines(x => x.filter((_, j) => j !== i))}>×</button>}
+        </div>
+      ))}
+      <button className="btn sm ghost" style={{ marginBottom: 10 }} onClick={() => setLines(l => [...l, { description: "", qty: "1", unit_price: "" }])}>+ Line</button>
+      <div className="form-grid">
+        <Field label="Currency"><Select value={currency} onChange={setCurrency} options={CURRENCIES} /></Field>
+        <Field label="Tax rate %"><input type="number" min="0" max="100" value={tax} onChange={e => setTax(e.target.value)} /></Field>
+        {type === "invoice" && <Field label="Due in (days)"><input type="number" min="0" value={dueDays} onChange={e => setDueDays(e.target.value)} /></Field>}
+      </div>
+      <Field label="Notes (terms, scope, validity)"><textarea value={notes} onChange={e => setNotes(e.target.value)} /></Field>
+      <div className="info">Subtotal {subtotal.toLocaleString()} {currency} · Total {Math.round(total * 100) / 100} {currency}</div>
+      <Err e={err} />
+      <button className="btn" disabled={busy || !title || lines.some(l => !l.description)} onClick={save}>Create {type}</button>
+    </Modal>
+  );
+}
+void Link;

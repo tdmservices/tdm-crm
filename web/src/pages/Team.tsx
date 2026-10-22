@@ -137,6 +137,14 @@ export function TeamPage({ user }: { user: User }) {
             ))}</ul>
           )}
         </div>
+        <div className={`card ${(d.overdue_payments ?? []).length ? "red" : ""}`}>
+          <h2>Overdue client payments</h2>
+          {(d.overdue_payments ?? []).length === 0 ? <Empty text="No scheduled payment is overdue" /> : (
+            <ul className="list">{d.overdue_payments.map((s: any) => (
+              <li key={s.id}><div className="main"><div className="title"><Link to={`/prospects/${s.prospect_id}`}>{s.company}</Link> · {s.name}</div><div className="sub">{s.amount} {s.currency} · {s.owner_name}</div></div><span className="chip red">due {fmtDate(s.expected_date)}</span></li>
+            ))}</ul>
+          )}
+        </div>
         <div className="card">
           <h2>Unpaid retainers this month</h2>
           {d.unpaid_retainers.length === 0 ? <Empty text="All active retainers paid" /> : (

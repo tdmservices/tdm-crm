@@ -41,7 +41,12 @@ async function main() {
   await call("hassaan", "POST", `/prospects/${h1}/stage`, { stage: "closed_won", payment_terms: "50% upfront, 50% on delivery", expected_delivery_date: new Date(Date.now() + 86400000 * 30).toISOString().slice(0, 10) });
   await call("adnan", "POST", `/prospects/${h1}/approve`, { approve: true });
   await call("abdul", "PATCH", `/prospects/${h1}`, { estimated_cost_usd: 2000 });
-  await call("abdul", "POST", "/payments", { prospect_id: h1, amount: 750000, currency: "PKR", received_at: new Date().toISOString().slice(0, 10), label: "Upfront" });
+  const today = new Date().toISOString().slice(0, 10);
+  const sched = await call("abdul", "PUT", `/prospects/${h1}/schedule`, { structure: "milestones", milestones: [{ name: "Upfront", percentage: 50, expected_date: today }, { name: "Final delivery", percentage: 50, expected_date: new Date(Date.now() + 86400000 * 30).toISOString().slice(0, 10) }] });
+  await call("abdul", "POST", "/payments", { prospect_id: h1, amount: 750000, currency: "PKR", received_at: today, label: "Upfront", schedule_id: sched.schedule[0].id });
+  const inv = await call("abdul", "POST", `/documents/from-schedule/${sched.schedule[1].id}`, {});
+  await call("abdul", "PATCH", `/documents/${inv.id}`, { status: "sent" });
+  await call("abdul", "POST", `/prospects/${h1}/portal-link`, {});
 
   const n1 = (await add("noman", { company: "Sunrise Realty", contact_name: "Maya", email: "maya@sunriserealty.com", source: "instagram", service_interest: "social_media", partner_id: id("Haider") })).id;
   await act("noman", n1, "messaged"); await call("noman", "POST", `/prospects/${n1}/stage`, { stage: "replied" });
@@ -49,7 +54,10 @@ async function main() {
   await call("abdul", "PATCH", `/meetings/${mn.id}`, { status: "held" });
   await call("noman", "POST", `/prospects/${n1}/stage`, { stage: "proposal_sent", deal_value: 1200, deal_currency: "USD", engagement_model: "monthly_retainer" });
   await call("abdul", "POST", `/prospects/${n1}/stage`, { stage: "closed_won", payment_terms: "Monthly, billed on the 1st" });
-  await call("abdul", "POST", "/payments", { prospect_id: n1, amount: 1200, currency: "USD", received_at: new Date(Date.now() - 86400000 * 15).toISOString().slice(0, 10), label: "Month 1" });
+  const ym = new Date().toISOString().slice(0, 7);
+  const rs = await call("abdul", "PUT", `/prospects/${n1}/schedule`, { structure: "monthly", retainer: { monthly_amount: 1200, billing_day: 1, start_month: ym, min_months: 6 } });
+  await call("abdul", "POST", "/payments", { prospect_id: n1, amount: 1200, currency: "USD", received_at: new Date().toISOString().slice(0, 10), label: "Month 1", schedule_id: rs.schedule[0].id });
+  await call("noman", "POST", "/documents", { prospect_id: n1, type: "proposal", title: "Social media retainer proposal", lines: [{ description: "Monthly social media management", qty: 1, unit_price: 1200 }], currency: "USD" });
   const n2 = (await add("noman", { company: "Oasis Hotels", contact_name: "Faisal", email: "faisal@oasishotels.sa", country: "Saudi Arabia", source: "cold_email", service_interest: "video" })).id;
   await act("noman", n2, "emailed", new Date(Date.now() - 86400000 * 3).toISOString().slice(0, 10)); // overdue follow-up
   const n3 = (await add("noman", { company: "Green Leaf Organics", contact_name: "Hina", email: "hina@greenleaf.pk", source: "fiverr", service_interest: "marketplace" })).id;
@@ -59,6 +67,7 @@ async function main() {
   await call("adnan", "POST", "/tasks", { title: "Daily outreach: 30 emails", assigned_to: id("Noman"), due_date: new Date().toISOString().slice(0, 10), recurrence: "daily" });
   await call("abdul", "POST", "/targets", { name: "Meetings booked", scope: "team", metric: "meetings_booked", number: 8, period: "month", bonus_usd: 100 });
   await call("abdul", "POST", "/targets", { name: "Weekly outreach", scope: "team", metric: "activities", number: 150, period: "week", bonus_usd: 0 });
+  await call("abdul", "POST", "/leaderboard/custom", { name: "Leads added", metric: "leads_added" });
   await call("adnan", "POST", "/reports/import", { rows: [{ company: "Delta Logistics", contact_name: "Unknown", email: "info@deltalogistics.com" }, { company: "Pixel Studio", contact_name: "Unknown", email: "hello@pixelstudio.io" }] });
   await call("haider", "POST", "/today/eod", { note: "28 emails, 3 replies, Blue Harbor meeting booked for tomorrow" });
   server.close();

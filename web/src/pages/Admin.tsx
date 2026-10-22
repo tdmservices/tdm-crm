@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { get, post, patch, api, label, fmtDateTime, type User } from "../lib/api";
 import { useAsync, Err, Empty, Modal, Field, Select, Tabs, nav, Link } from "../lib/ui";
+import { METRIC_LABEL } from "./Targets";
 
-const TABS = [["users", "Users"], ["settings", "Settings"], ["import", "Import"], ["unassigned", "Unassigned"], ["reassign", "Reassign"]].map(([id, l]) => ({ id, label: l }));
+const TABS = [["users", "Users"], ["settings", "Settings"], ["integrations", "Integrations"], ["leaderboards", "Leaderboards"], ["import", "Import"], ["unassigned", "Unassigned"], ["reassign", "Reassign"]].map(([id, l]) => ({ id, label: l }));
 
 export function AdminPage({ user, tab }: { user: User; tab: string }) {
   const owner = user.role === "owner";
@@ -12,6 +13,8 @@ export function AdminPage({ user, tab }: { user: User; tab: string }) {
       <Tabs tabs={TABS} value={tab} onChange={t => nav(`/admin?tab=${t}`)} />
       {tab === "users" && <Users owner={owner} />}
       {tab === "settings" && <Settings owner={owner} />}
+      {tab === "integrations" && <Integrations owner={owner} />}
+      {tab === "leaderboards" && <Leaderboards owner={owner} />}
       {tab === "import" && <Import />}
       {tab === "unassigned" && <Unassigned />}
       {tab === "reassign" && <Reassign owner={owner} />}
@@ -33,7 +36,7 @@ function Users({ owner }: { owner: boolean }) {
         <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Model</th><th className="num">Rate</th><th>Active</th><th>Last login</th><th /></tr></thead>
         <tbody>{((q.data ?? []) as any[]).map(u => (
           <tr key={u.id} style={u.active ? undefined : { opacity: .5 }}>
-            <td className="b">{u.name}</td><td className="small">{u.email}</td><td>{u.role}</td><td>{label(u.commission_model)}</td><td className="num">{u.commission_rate != null ? `${Math.round(u.commission_rate * 100)}%` : "—"}</td>
+            <td className="b">{u.name}</td><td className="small">{u.email}</td><td>{u.role}</td>{u.role === "owner" ? <td colSpan={2} className="small muted">Owner keeps everything</td> : <><td>{label(u.commission_model)}</td><td className="num">{u.commission_rate != null ? `${Math.round(u.commission_rate * 100)}%` : "—"}</td></>}
             <td>{u.active ? "✓" : "✗"}</td><td className="small">{fmtDateTime(u.last_login_at)}</td>
             <td>{owner && <button className="btn sm muted" onClick={() => setEditing(u)}>Edit</button>}</td>
           </tr>
@@ -65,9 +68,10 @@ function UserForm({ user, onClose, onSaved }: { user?: any; onClose: () => void;
         <Field label="Email"><input type="email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} /></Field>
         <Field label={user ? "New password (leave blank to keep)" : "Password"} hint="At least 8 characters"><input type="text" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} autoComplete="off" /></Field>
         <Field label="Role"><Select value={f.role} onChange={v => setF({ ...f, role: v })} options={["agent", "manager", "owner"]} labelFn={label} /></Field>
-        <Field label="Commission model"><Select value={f.commission_model} onChange={v => setF({ ...f, commission_model: v })} options={[{ value: "revenue_share", label: "Revenue share (% of payment)" }, { value: "profit_split", label: "Profit split (50/50 after cost)" }]} /></Field>
-        <Field label="Rate (%)" hint={f.commission_model === "profit_split" ? "Ignored for profit split (always 50/50)" : "Share of each payment received"}><input type="number" value={f.rate} onChange={e => setF({ ...f, rate: e.target.value })} /></Field>
+        {f.role !== "owner" && <Field label="Commission model"><Select value={f.commission_model} onChange={v => setF({ ...f, commission_model: v })} options={[{ value: "revenue_share", label: "Revenue share (% of payment)" }, { value: "profit_split", label: "Profit split (50/50 after cost)" }]} /></Field>}
+        {f.role !== "owner" && <Field label="Rate (%)" hint={f.commission_model === "profit_split" ? "Ignored for profit split (always 50/50)" : "Share of each payment received"}><input type="number" value={f.rate} onChange={e => setF({ ...f, rate: e.target.value })} /></Field>}
       </div>
+      {f.role === "owner" && <div className="info">Owner keeps everything: no commission is ever calculated for an owner account.</div>}
       {user && <label className="row small" style={{ marginBottom: 10 }}><input type="checkbox" style={{ width: "auto" }} checked={f.active} onChange={e => setF({ ...f, active: e.target.checked })} /> Active (deactivated users cannot log in; their records stay and can be reassigned)</label>}
       <p className="small muted">Retainer and dedicated-resource deals always use 30% first month then 10%, whatever the model. Changes apply to deals closed after today.</p>
       <Err e={err} />
@@ -109,6 +113,111 @@ function Settings({ owner }: { owner: boolean }) {
         <table><thead><tr><th>Currency</th><th className="num">USD per unit</th><th>Rate date</th><th /></tr></thead>
           <tbody>{Object.entries((rates.data?.rates ?? {}) as Record<string, any>).map(([c, r]) => <tr key={c}><td className="b">{c}</td><td className="num">{r ? r.usd_per_unit.toFixed(6) : "—"}</td><td className="small">{r?.rate_date ?? "none"}</td><td>{r?.is_fallback && <span className="chip warn">fallback</span>}</td></tr>)}</tbody></table>
       </div>
+    </div>
+  );
+}
+
+
+/* ---------------- Integrations ---------------- */
+const MASK = "••••••";
+type IField = [string, string, "text" | "password" | "number" | "textarea"];
+interface Group { id: string; title: string; note: string; fields: IField[]; urls?: [string, string][]; extra?: string }
+const GROUPS: Group[] = [
+  { id: "brand", title: "Branding", note: "Shown in the app header, on proposals and invoices, and on the client portal. Set this once per agency.", fields: [["agency_name", "Agency name", "text"], ["agency_logo_url", "Logo URL", "text"], ["display_currency", "Leaderboard display currency", "text"], ["agency_address", "Address (on documents)", "textarea"], ["agency_bank_details", "Bank details (on invoices)", "textarea"], ["invoice_prefix", "Invoice number prefix", "text"], ["proposal_prefix", "Proposal number prefix", "text"], ["tax_rate", "Default tax rate (%)", "number"]] },
+  { id: "smtp", title: "Email alerts via SMTP", note: "Any mailbox with SMTP works (Google Workspace, Zoho, Outlook). Use an app password, not the account password. Alerts go to each person who has email alerts on in their profile.", fields: [["smtp_host", "SMTP host", "text"], ["smtp_port", "SMTP port (587 or 465)", "number"], ["smtp_user", "SMTP username", "text"], ["smtp_pass", "SMTP password", "password"], ["smtp_from", "From address", "text"], ["owner_alert_email", "Owner alert email", "text"]] },
+  { id: "wa", title: "WhatsApp alerts via Meta Cloud API", note: "From Meta for Developers: create a WhatsApp Business app, copy the permanent access token and the phone number ID. Recipients must have messaged the number in the last 24 hours, or a template is needed.", fields: [["whatsapp_token", "Access token", "password"], ["whatsapp_phone_id", "Phone number ID", "text"]] },
+  { id: "rem", title: "Reminders", note: "The morning digest and the end-of-day reminder are sent at these hours, Pakistan time.", fields: [["reminder_morning_hour", "Morning digest hour (0–23)", "number"], ["reminder_eod_hour", "End-of-day reminder hour (0–23)", "number"]] },
+  { id: "cal", title: "Calendly", note: "In Calendly → Integrations → Webhooks, add the URL below for the events invitee.created and invitee.canceled. Paste the signing key here. Bookings are matched to prospects by the invitee's email and credited to the prospect's owner; unknown invitees land in the Unassigned pool.", fields: [["calendly_signing_key", "Webhook signing key", "password"]], urls: [["Webhook URL", "/api/webhooks/calendly"]] },
+  { id: "meta", title: "Meta Lead Ads", note: "In the Meta app dashboard, add the Webhooks product, subscribe the Page to leadgen with the callback URL below and the verify token you choose here. The page access token is used to fetch each lead's form fields. Leads land in the Unassigned pool with the ad set name as campaign tag.", fields: [["meta_verify_token", "Verify token (you choose it)", "text"], ["meta_page_token", "Page access token", "password"], ["meta_app_secret", "App secret (signature check)", "password"]], urls: [["Callback URL", "/api/webhooks/meta"]] },
+  { id: "google", title: "Google Ads lead forms", note: "In the lead form asset, set the webhook URL below and the key you choose here. Leads land in the Unassigned pool with the campaign ID as campaign tag.", fields: [["google_lead_key", "Webhook key (you choose it)", "password"]], urls: [["Webhook URL", "/api/webhooks/google"]] },
+  { id: "chatflow", title: "ChatFlow / WhatsApp conversations", note: "Point ChatFlow (or any WhatsApp tool) at the URL below with the key you choose. Outbound messages are logged as activities for the agent; inbound replies become notes, move Contacted → Replied and alert the owner. Unknown numbers become Unassigned leads.", fields: [["chatflow_key", "Webhook key (you choose it)", "password"]], urls: [["Webhook URL", "/api/webhooks/chatflow"]], extra: 'POST JSON body: {"key": "...", "phone": "+92...", "direction": "in" | "out", "text": "...", "agent_email": "optional", "timestamp": "optional ISO", "id": "optional unique id"}' },
+  { id: "imap", title: "Email capture via IMAP", note: "Agents BCC this mailbox on outreach; replies from prospects to it are captured too. Polled every 10 minutes. Use an app password.", fields: [["imap_host", "IMAP host", "text"], ["imap_user", "IMAP username", "text"], ["imap_pass", "IMAP password", "password"]] },
+];
+function copy(text: string) { try { void navigator.clipboard.writeText(text); } catch { /* ignore */ } }
+
+function Integrations({ owner }: { owner: boolean }) {
+  const q = useAsync(() => get("/settings"), []);
+  const settings = (q.data ?? {}) as Record<string, string>;
+  return (
+    <div>
+      {!owner && <div className="info">Read-only for managers. Secrets are hidden.</div>}
+      <Err e={q.error} />
+      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", alignItems: "start" }}>
+        {GROUPS.map(g => <IntegrationCard key={g.id} group={g} settings={settings} owner={owner} onSaved={q.reload} />)}
+      </div>
+    </div>
+  );
+}
+
+function IntegrationCard({ group, settings, owner, onSaved }: { group: Group; settings: Record<string, string>; owner: boolean; onSaved: () => void }) {
+  const [f, setF] = useState<Record<string, string> | null>(null);
+  const [err, setErr] = useState<unknown>(null); const [msg, setMsg] = useState(""); const [busy, setBusy] = useState(false);
+  const vals = f ?? settings;
+  const origin = typeof location !== "undefined" ? location.origin : "";
+  async function save() {
+    if (!f) return;
+    setErr(null); setMsg(""); setBusy(true);
+    try {
+      const body: Record<string, string> = {};
+      for (const [k] of group.fields) if (f[k] !== undefined && f[k] !== MASK) body[k] = f[k];
+      await api("PUT", "/settings", body); setMsg("Saved."); setF(null); onSaved();
+    } catch (e) { setErr(e); } finally { setBusy(false); }
+  }
+  return (
+    <div className="card">
+      <h2>{group.title}</h2>
+      <p className="small muted">{group.note}</p>
+      {group.urls?.map(([l, path]) => (
+        <Field key={path} label={l}>
+          <div className="row" style={{ flexWrap: "nowrap" }}><input readOnly value={origin + path} /><button className="btn sm muted" onClick={() => copy(origin + path)}>Copy</button></div>
+        </Field>
+      ))}
+      {group.extra && <pre className="small" style={{ whiteSpace: "pre-wrap", background: "#f3f4f6", padding: 8, borderRadius: 8 }}>{group.extra}</pre>}
+      {group.fields.map(([k, l, t]) => (
+        <Field key={k} label={l}>
+          {t === "textarea"
+            ? <textarea value={vals[k] ?? ""} disabled={!owner} onChange={e => setF({ ...vals, [k]: e.target.value })} />
+            : <input type={t} value={vals[k] ?? ""} disabled={!owner} placeholder={t === "password" ? "not set" : ""} onChange={e => setF({ ...vals, [k]: e.target.value })} autoComplete="off" />}
+        </Field>
+      ))}
+      <Err e={err} />{msg && <div className="info">{msg}</div>}
+      {owner && <button className="btn" disabled={!f || busy} onClick={save}>Save</button>}
+    </div>
+  );
+}
+
+/* ---------------- Custom leaderboards ---------------- */
+function Leaderboards({ owner }: { owner: boolean }) {
+  const q = useAsync(() => get("/leaderboard/custom"), []);
+  const [name, setName] = useState(""); const [metric, setMetric] = useState("deals_closed");
+  const [err, setErr] = useState<unknown>(null); const [busy, setBusy] = useState(false);
+  const metrics: string[] = q.data?.metrics ?? Object.keys(METRIC_LABEL);
+  async function add() {
+    setErr(null); setBusy(true);
+    try { await post("/leaderboard/custom", { name, metric }); setName(""); q.reload(); } catch (e) { setErr(e); } finally { setBusy(false); }
+  }
+  async function toggle(b: any) { setErr(null); try { await patch(`/leaderboard/custom/${b.id}`, { active: !b.active }); q.reload(); } catch (e) { setErr(e); } }
+  return (
+    <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", alignItems: "start" }}>
+      <div className="card">
+        <h2>Custom boards</h2>
+        <p className="small muted">Meetings and Commission are always on. Add a third board on any number the CRM already tracks. Boards appear for every agent immediately; names and totals only.</p>
+        <Err e={q.error || err} />
+        {(q.data?.boards ?? []).length === 0 ? <Empty text="No custom boards yet" /> : (
+          <ul className="list">{(q.data?.boards as any[]).map(b => (
+            <li key={b.id}><div className="main"><div className="title">{b.name}</div><div className="sub">{METRIC_LABEL[b.metric] ?? b.metric}</div></div>
+              <div className="row"><span className={`chip ${b.active ? "ok" : "grey"}`}>{b.active ? "active" : "off"}</span>{owner && <button className="btn sm muted" onClick={() => toggle(b)}>{b.active ? "Deactivate" : "Activate"}</button>}</div></li>
+          ))}</ul>
+        )}
+      </div>
+      {owner && (
+        <div className="card">
+          <h2>New board</h2>
+          <Field label="Name"><input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Deals closed" /></Field>
+          <Field label="Ranks by"><Select value={metric} onChange={setMetric} options={metrics.map(m => ({ value: m, label: METRIC_LABEL[m] ?? m }))} /></Field>
+          <button className="btn" disabled={busy || !name.trim()} onClick={add}>Add board</button>
+        </div>
+      )}
     </div>
   );
 }

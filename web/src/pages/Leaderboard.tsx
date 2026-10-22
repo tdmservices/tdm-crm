@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { get, usd, pkr, type User } from "../lib/api";
 import { Tabs, useAsync, Err, Empty } from "../lib/ui";
+import { METRIC_LABEL } from "./Targets";
 
 interface Row { rank: number; id: number; name: string; total: number; total_pkr?: number; previous: number | null; is_me: boolean; badge: string | null }
 const BADGE: Record<string, string> = { gold: "🥇", silver: "🥈", bronze: "🥉" };
@@ -13,10 +14,12 @@ function Change({ row, money }: { row: Row; money?: boolean }) {
   return <span className="small" style={{ color: up ? "var(--ok)" : "var(--danger)" }}>{up ? "▲" : "▼"} {money ? usd(Math.abs(d)) : Math.abs(d)}</span>;
 }
 
-function Board({ title, rows, money }: { title: string; rows: Row[]; money?: boolean }) {
+function Board({ title, subtitle, rows, money, usdOnly }: { title: string; subtitle?: string; rows: Row[]; money?: boolean; usdOnly?: boolean }) {
+  const fmt = (v: number) => money ? pkr(v) : usdOnly ? usd(v) : v;
   return (
     <div className="card">
-      <h2>{title}</h2>
+      <h2 style={subtitle ? { marginBottom: 0 } : undefined}>{title}</h2>
+      {subtitle && <div className="small muted" style={{ marginBottom: 8 }}>{subtitle}</div>}
       {rows.length === 0 ? <Empty text="No agents yet" /> : (
         <ul className="list">
           {rows.map(r => (
@@ -24,10 +27,10 @@ function Board({ title, rows, money }: { title: string; rows: Row[]; money?: boo
               <span className="rank">{r.rank}</span>
               <div className="main">
                 <div className="title">{r.badge && <span className="badge">{BADGE[r.badge]} </span>}{r.name}{r.is_me && <span className="small muted"> (you)</span>}</div>
-                <div className="sub"><Change row={r} money={money} /></div>
+                <div className="sub"><Change row={r} money={money || usdOnly} /></div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div className="b">{money ? pkr(r.total_pkr) : r.total}</div>
+                <div className="b">{money ? pkr(r.total_pkr) : fmt(r.total)}</div>
                 {money && <div className="small muted">{usd(r.total)}</div>}
               </div>
             </li>
@@ -51,6 +54,7 @@ export function LeaderboardPage({ user }: { user: User }) {
         <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
           <Board title="Meetings booked" rows={data.meetings} />
           <Board title="Commission earned" rows={data.commission} money />
+          {(data.custom ?? []).map((b: any) => <Board key={b.id} title={b.name} subtitle={METRIC_LABEL[b.metric] ?? b.metric} rows={b.rows} usdOnly={b.metric === "revenue_usd"} />)}
         </div>
       )}
       <p className="small muted">Names and totals only. Pending commission and target bonuses do not count. Commission shown in PKR at today's rate; USD amounts are frozen per entry.</p>
